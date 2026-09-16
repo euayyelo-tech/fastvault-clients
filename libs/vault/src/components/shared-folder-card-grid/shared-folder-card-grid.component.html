@@ -51,6 +51,9 @@
             (click)="toggleExpanded()"
           >
             {{ (openState ? "showLess" : "showAll") | i18n }}
+            @if (openState) {
+              <span class="tw-sr-only">{{ revealedMessage() }}</span>
+            }
           </button>
         }
       }

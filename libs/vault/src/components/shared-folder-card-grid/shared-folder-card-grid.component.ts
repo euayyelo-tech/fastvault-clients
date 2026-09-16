@@ -1,4 +1,3 @@
-import { LiveAnnouncer } from "@angular/cdk/a11y";
 import { DOCUMENT, NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
@@ -6,7 +5,6 @@ import {
   DestroyRef,
   ElementRef,
   Injector,
-  afterNextRender,
   computed,
   effect,
   inject,
@@ -28,6 +26,7 @@ import {
   LinkModule,
   TypographyModule,
   AccordionComponent,
+  focusAfterRender,
 } from "@bitwarden/components";
 import { I18nPipe } from "@bitwarden/ui-common";
 
@@ -111,7 +110,6 @@ type SharedFolderCard = {
 })
 export class SharedFolderCardGridComponent {
   private readonly i18nService = inject(I18nService);
-  private readonly liveAnnouncer = inject(LiveAnnouncer);
   private readonly injector = inject(Injector);
   private readonly document = inject(DOCUMENT);
 
@@ -307,43 +305,26 @@ export class SharedFolderCardGridComponent {
     this.expanded() ? this.cards() : this.cards().slice(0, this.collapsedCardCount()),
   );
 
+  /**
+   * How many cards the reveal put above the trigger, as a sentence. Carried in the trigger's own
+   * label rather than a live region: the revealed cards land behind the user's focus, and a live
+   * region raised alongside the focus change the reveal causes is dropped rather than read — on
+   * Chromium, which the desktop app runs on, and which enables no accessibility mode of its own.
+   */
+  protected readonly revealedMessage = computed(() => {
+    const count = this.overflowCards().length;
+    return count === 1
+      ? this.i18nService.t("moreSharedFoldersShownAboveSingular")
+      : this.i18nService.t("moreSharedFoldersShownAbove", count);
+  });
+
   protected toggleExpanded() {
     const triggerHeldFocus = this.document.activeElement === this.toggle()?.nativeElement;
 
     this.expanded.update((expanded) => !expanded);
 
-    // Revealed cards land above the trigger, behind the user's focus, where a screen reader would
-    // otherwise miss them. Collapsing reveals nothing, so it announces nothing.
-    const revealed = this.expanded() ? this.revealedMessage() : undefined;
-
-    if (!triggerHeldFocus) {
-      this.announce(revealed);
-      return;
+    if (triggerHeldFocus) {
+      focusAfterRender(this.injector, () => this.toggle()?.nativeElement);
     }
-
-    afterNextRender(
-      () => {
-        this.toggle()?.nativeElement.focus();
-        // After the focus change, not before: focusing the replacement is itself announced, and a
-        // message already queued when that happens is dropped rather than read out after it.
-        this.announce(revealed);
-      },
-      { injector: this.injector },
-    );
-  }
-
-  private revealedMessage(): string {
-    const count = this.overflowCards().length;
-    return count === 1
-      ? this.i18nService.t("moreSharedFoldersShownAboveSingular")
-      : this.i18nService.t("moreSharedFoldersShownAbove", count);
-  }
-
-  private announce(message: string | undefined) {
-    if (message == null) {
-      return;
-    }
-
-    void this.liveAnnouncer.announce(message, "polite");
   }
 }

@@ -1,7 +1,5 @@
-import { LiveAnnouncer } from "@angular/cdk/a11y";
 import { ComponentFixture, TestBed } from "@angular/core/testing";
 import { provideRouter } from "@angular/router";
-import { mock, MockProxy } from "jest-mock-extended";
 
 import { CollectionView } from "@bitwarden/common/admin-console/models/collections";
 import { I18nService } from "@bitwarden/common/platform/abstractions/i18n.service";
@@ -34,7 +32,6 @@ const PARENT = { id: "engineering" as CollectionId, name: "Engineering" };
 
 describe("SharedFolderCardGridComponent", () => {
   let fixture: ComponentFixture<SharedFolderCardGridComponent>;
-  let liveAnnouncer: MockProxy<LiveAnnouncer>;
 
   /**
    * The observers the component has attached to its grid, and what each is watching. jsdom has no
@@ -131,9 +128,14 @@ describe("SharedFolderCardGridComponent", () => {
     return fixture.nativeElement.querySelector(TRIGGER_SELECTOR);
   }
 
-  beforeEach(async () => {
-    liveAnnouncer = mock<LiveAnnouncer>();
+  /** The trigger's visible label, without the text it carries only for a screen reader. */
+  function triggerLabel(): string | undefined {
+    const copy = trigger()?.cloneNode(true) as HTMLElement | undefined;
+    copy?.querySelectorAll(".tw-sr-only").forEach((hidden) => hidden.remove());
+    return copy?.textContent?.trim();
+  }
 
+  beforeEach(async () => {
     observers = [];
     global.ResizeObserver = class implements ResizeObserver {
       private readonly observed: { callback: ResizeObserverCallback; targets: Element[] };
@@ -170,7 +172,6 @@ describe("SharedFolderCardGridComponent", () => {
             },
           },
         },
-        { provide: LiveAnnouncer, useValue: liveAnnouncer },
       ],
     }).compileComponents();
   });
@@ -355,20 +356,6 @@ describe("SharedFolderCardGridComponent", () => {
       expect(cards()).toHaveLength(7);
       expect(trigger()).toBeNull();
     });
-
-    it("announces the overflow the current width leaves behind", () => {
-      createComponent(children(8));
-
-      resizeGridTo(600);
-      trigger()?.click();
-      fixture.detectChanges();
-
-      // Two cards past the six the two-column grid shows, rather than the none a wider one hides.
-      expect(liveAnnouncer.announce).toHaveBeenCalledWith(
-        "moreSharedFoldersShownAbove:2",
-        "polite",
-      );
-    });
   });
 
   describe("overflow rows", () => {
@@ -383,13 +370,13 @@ describe("SharedFolderCardGridComponent", () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 3));
 
       expect(cards()).toHaveLength(COLLAPSED_CARD_COUNT);
-      expect(trigger()?.textContent?.trim()).toBe("showAll");
+      expect(triggerLabel()).toBe("showAll");
 
       trigger()?.click();
       fixture.detectChanges();
 
       expect(cards()).toHaveLength(COLLAPSED_CARD_COUNT + 3);
-      expect(trigger()?.textContent?.trim()).toBe("showLess");
+      expect(triggerLabel()).toBe("showLess");
     });
 
     it("appends the overflow cards to the same grid so they fill the last partial row", () => {
@@ -517,106 +504,104 @@ describe("SharedFolderCardGridComponent", () => {
       await fixture.whenStable();
 
       const replacement = trigger()!;
-      expect(replacement.textContent?.trim()).toBe("showLess");
+      expect(triggerLabel()).toBe("showLess");
       expect(replacement.getAttribute("aria-expanded")).toBe("true");
       expect(replacement.getAttribute("aria-controls")).toBe(gridId);
       expect(replacement.querySelector("i")?.classList).toContain("bwi-angle-up");
     });
   });
 
-  describe("announcing expansion", () => {
-    /** Where focus sat each time the grid announced something. */
-    function focusWhenAnnounced(): (Element | null)[] {
-      const active: (Element | null)[] = [];
-      liveAnnouncer.announce.mockImplementation(async () => {
-        active.push(document.activeElement);
-      });
-      return active;
+  /**
+   * The revealed cards land behind the user's focus, so the count rides the trigger's own label —
+   * read out with the trigger each time a toggle rebuilds and refocuses it.
+   */
+  describe("the revealed-card count", () => {
+    /** The text the trigger carries for a screen reader but not on screen. */
+    function triggerCallout(): string | undefined {
+      return trigger()?.querySelector(".tw-sr-only")?.textContent?.trim();
     }
 
-    it("announces how many rows were revealed above the trigger", () => {
+    it("names how many cards the reveal put above the trigger", () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 4));
 
-      trigger()?.click();
+      trigger()!.click();
       fixture.detectChanges();
 
-      expect(liveAnnouncer.announce).toHaveBeenCalledWith(
-        "moreSharedFoldersShownAbove:4",
-        "polite",
-      );
+      expect(triggerCallout()).toBe("moreSharedFoldersShownAbove:4");
     });
 
-    it("announces after handing focus to the replacement trigger", async () => {
+    it("uses the singular sentence for a lone revealed card", () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 1));
+
+      trigger()!.click();
+      fixture.detectChanges();
+
+      expect(triggerCallout()).toBe("moreSharedFoldersShownAboveSingular");
+    });
+
+    // The count has to survive the rebuild, since the rebuilt trigger is what gets read out.
+    it("carries the count on the trigger the toggle hands focus to", async () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 4));
-      const active = focusWhenAnnounced();
       trigger()!.focus();
 
       trigger()!.click();
       fixture.detectChanges();
       await fixture.whenStable();
 
-      expect(liveAnnouncer.announce).toHaveBeenCalledWith(
-        "moreSharedFoldersShownAbove:4",
-        "polite",
-      );
-      expect(active).toEqual([trigger()]);
-    });
-
-    it("still announces when the trigger was clicked without holding focus", async () => {
-      createComponent(children(COLLAPSED_CARD_COUNT + 4));
-      const active = focusWhenAnnounced();
-
-      trigger()!.click();
-      fixture.detectChanges();
-      await fixture.whenStable();
-
-      expect(liveAnnouncer.announce).toHaveBeenCalledWith(
-        "moreSharedFoldersShownAbove:4",
-        "polite",
-      );
-      expect(active).toEqual([document.body]);
-    });
-
-    it("does not announce when the trigger holding focus collapses the grid", async () => {
-      createComponent(children(COLLAPSED_CARD_COUNT + 4), scopeTo(PARENT.id), {
-        initiallyExpanded: true,
-      });
-      trigger()!.focus();
-
-      trigger()!.click();
-      fixture.detectChanges();
-      await fixture.whenStable();
-
-      expect(liveAnnouncer.announce).not.toHaveBeenCalled();
       expect(document.activeElement).toBe(trigger());
+      expect(triggerCallout()).toBe("moreSharedFoldersShownAbove:4");
     });
 
-    it("does not announce on the initial collapsed render", () => {
+    // Reading it before the visible label would bury "Show less" mid-sentence.
+    it("reads after the visible label rather than before it", () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 4));
 
-      expect(liveAnnouncer.announce).not.toHaveBeenCalled();
+      trigger()!.click();
+      fixture.detectChanges();
+
+      expect(trigger()?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+        "showLess moreSharedFoldersShownAbove:4",
+      );
     });
 
-    // Nothing was revealed, so there is nothing to point the user back at.
-    it("does not announce when the host renders the grid expanded", () => {
+    it("counts only the cards the current width left over", () => {
+      createComponent(children(8));
+
+      resizeGridTo(600);
+      trigger()!.click();
+      fixture.detectChanges();
+
+      // Two cards past the six a two-column grid shows, rather than the none a wider one hides.
+      expect(triggerCallout()).toBe("moreSharedFoldersShownAbove:2");
+    });
+
+    it("carries nothing while the overflow is still collapsed", () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 4));
+
+      expect(triggerCallout()).toBeUndefined();
+    });
+
+    it("drops the count when the trigger collapses the grid again", () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 4));
+
+      trigger()!.click();
+      fixture.detectChanges();
+      expect(triggerCallout()).toBe("moreSharedFoldersShownAbove:4");
+
+      trigger()!.click();
+      fixture.detectChanges();
+
+      expect(triggerCallout()).toBeUndefined();
+    });
+
+    // The cards are above the trigger however they got there, so a host that renders the grid
+    // expanded states it too.
+    it("states the count when the host renders the grid expanded", () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 4), scopeTo(PARENT.id), {
         initiallyExpanded: true,
       });
 
-      expect(liveAnnouncer.announce).not.toHaveBeenCalled();
-    });
-
-    it("does not announce when the trigger collapses the grid again", () => {
-      createComponent(children(COLLAPSED_CARD_COUNT + 4));
-
-      trigger()?.click();
-      fixture.detectChanges();
-      liveAnnouncer.announce.mockClear();
-
-      trigger()?.click();
-      fixture.detectChanges();
-
-      expect(liveAnnouncer.announce).not.toHaveBeenCalled();
+      expect(triggerCallout()).toBe("moreSharedFoldersShownAbove:4");
     });
   });
 
