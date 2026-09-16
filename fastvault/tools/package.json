@@ -1,0 +1,12 @@
+{
+  "name": "fastvault-asset-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen": "node gen-assets.mjs"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.0",
+    "png-to-ico": "^2.1.8"
+  }
+}

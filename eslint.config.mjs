@@ -726,6 +726,12 @@ export default tseslint.config(
 
       "apps/desktop/desktop_native",
 
+      // FastVault overlay: staged branding/build sources living outside apps/libs/scripts;
+      // not part of tsconfig.eslint.json's typed-lint project (see Task 2 of the FastVault
+      // desktop plan). apply.mjs (Task 3) copies these into the real project paths, where
+      // they're linted normally.
+      "fastvault/",
+
       "apps/web/config.js",
       "apps/web/scripts/*.js",
       "apps/web/tailwind.config.js",
