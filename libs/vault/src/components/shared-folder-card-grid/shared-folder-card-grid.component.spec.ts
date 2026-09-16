@@ -494,8 +494,7 @@ describe("SharedFolderCardGridComponent", () => {
       expect(document.activeElement).toBe(trigger());
     });
 
-    // A pointer click leaves focus where it was in Safari, and answering it by taking focus would
-    // move the user out of whatever they were on.
+    // A pointer click leaves focus where it was in Safari, so taking focus would move the user.
     it("leaves focus alone when the trigger does not hold it", async () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 1));
       const elsewhere = cards()[0];
@@ -547,8 +546,6 @@ describe("SharedFolderCardGridComponent", () => {
       );
     });
 
-    // The replacement trigger taking focus is itself announced, and a message already waiting when
-    // that happens is dropped rather than read out after it.
     it("announces after handing focus to the replacement trigger", async () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 4));
       const active = focusWhenAnnounced();

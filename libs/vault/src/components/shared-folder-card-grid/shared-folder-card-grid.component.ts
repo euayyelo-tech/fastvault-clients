@@ -145,11 +145,8 @@ export class SharedFolderCardGridComponent {
   private readonly gridList = viewChild<ElementRef<HTMLElement>>("gridList");
 
   /**
-   * The overflow trigger, as of the last render — a toggle replaces it. Absent whenever the
-   * children fit in the rows on show.
-   *
-   * Read as an `ElementRef`: `bitLink` is a component rather than a directive, so the query would
-   * otherwise resolve to it instead of the button it is applied to.
+   * The overflow trigger as of the last render — each toggle replaces it. Read as an `ElementRef`:
+   * `bitLink` is a component, so the query would otherwise resolve to it rather than the button.
    */
   private readonly toggle = viewChild("toggle", { read: ElementRef<HTMLButtonElement> });
 
@@ -315,9 +312,8 @@ export class SharedFolderCardGridComponent {
 
     this.expanded.update((expanded) => !expanded);
 
-    // The grid sits above its own trigger, so the cards that just appeared are behind the user's
-    // focus and would otherwise go unnoticed by a screen reader. Only revealing announces: a grid
-    // the trigger has just collapsed has nothing above to point back at.
+    // Revealed cards land above the trigger, behind the user's focus, where a screen reader would
+    // otherwise miss them. Collapsing reveals nothing, so it announces nothing.
     const revealed = this.expanded() ? this.revealedMessage() : undefined;
 
     if (!triggerHeldFocus) {
@@ -328,16 +324,14 @@ export class SharedFolderCardGridComponent {
     afterNextRender(
       () => {
         this.toggle()?.nativeElement.focus();
-        // Queued behind the focus change rather than ahead of it: the replacement trigger taking
-        // focus is itself announced, and a message already waiting when that happens is dropped
-        // rather than read out after it.
+        // After the focus change, not before: focusing the replacement is itself announced, and a
+        // message already queued when that happens is dropped rather than read out after it.
         this.announce(revealed);
       },
       { injector: this.injector },
     );
   }
 
-  /** How many cards the last reveal added above the trigger. */
   private revealedMessage(): string {
     const count = this.overflowCards().length;
     return count === 1
