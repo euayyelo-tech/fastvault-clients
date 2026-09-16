@@ -32,6 +32,11 @@
       </ul>
 
       @if (overflow.length > 0) {
+        <!--
+          Tracked by the open state so each toggle rebuilds the button rather than relabelling it.
+          VoiceOver keeps the position it last read for an element, and the rows revealed above move
+          the button without invalidating it; a new button has no stale position to draw around.
+        -->
         @for (openState of [expanded()]; track openState) {
           <button
             #toggle
