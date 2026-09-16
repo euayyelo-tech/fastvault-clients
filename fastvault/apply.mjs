@@ -176,6 +176,294 @@ function applyStrings() {
   log(`store locales: ${n} files renamed`);
 }
 
+// ---------- 3. config (JSON) ----------
+function applyConfig() {
+  editJson("apps/desktop/electron-builder.json", (j) => {
+    j.extraMetadata.name = "fastvault";
+    j.productName = "FastVault";
+    j.appId = "app.fastvault.desktop";
+    j.copyright =
+      "Copyright © FSITES LTD. Based on the Bitwarden clients © 2015-2026 Bitwarden Inc.";
+    j.publish = {
+      provider: "github",
+      owner: "euayyelo-tech",
+      repo: "fastvault-clients",
+      releaseType: "release",
+    };
+    j.protocols = [{ name: "FastVault", schemes: ["fastvault"] }];
+    j.win.target = ["nsis", "portable"];
+    delete j.win.signtoolOptions;
+    const azure =
+      process.env.AZURE_SIGN_ENDPOINT &&
+      process.env.AZURE_SIGN_ACCOUNT &&
+      process.env.AZURE_SIGN_PROFILE;
+    if (azure) {
+      j.win.publisherName = "FSITES LTD";
+      j.win.azureSignOptions = {
+        endpoint: process.env.AZURE_SIGN_ENDPOINT,
+        codeSigningAccountName: process.env.AZURE_SIGN_ACCOUNT,
+        certificateProfileName: process.env.AZURE_SIGN_PROFILE,
+      };
+    }
+    j.nsis = {
+      ...j.nsisWeb,
+      artifactName: "FastVault-Installer-${version}.${ext}",
+      license: "LICENSE_GPL.txt",
+    };
+    delete j.nsisWeb;
+    j.portable.artifactName = "FastVault-Portable-${version}.${ext}";
+    j.linux.desktop.entry.Name = "FastVault";
+    j.snap.summary = "FastVault is a password manager for all of your devices.";
+    j.snap.description = "Password manager.";
+    if (!j.win.extraFiles?.some((e) => e.to === "bitwarden_chromium_import_helper.exe"))
+      fail("electron-builder.json: chromium import helper entry moved");
+  });
+  editJson("apps/desktop/package.json", (j) => {
+    j.version = VERSION;
+    j.description = "FastVault password manager";
+  });
+  editJson("apps/browser/src/manifest.json", (j) => {
+    j.short_name = "FastVault";
+    j.version = VERSION;
+    j.homepage_url = SITE;
+    j.__firefox__browser_specific_settings.gecko.id = FIREFOX_ID;
+  });
+  editJson("apps/browser/src/manifest.v3.json", (j) => {
+    j.short_name = "FastVault";
+    j.version = VERSION;
+    j.homepage_url = SITE;
+    j.__firefox__browser_specific_settings.gecko.id = FIREFOX_ID;
+  });
+}
+
+// ---------- 4. code anchors ----------
+function applyCode() {
+  // Server default (spec §4.3)
+  replaceBlock(
+    "libs/common/src/platform/services/default-environment.service.ts",
+    "export const PRODUCTION_REGIONS: RegionConfig[] = [",
+    "];",
+    `export const PRODUCTION_REGIONS: RegionConfig[] = [
+  {
+    key: Region.US,
+    domain: "fastvault.app",
+    urls: {
+      base: "${VAULT}",
+      api: null,
+      identity: null,
+      icons: null,
+      webVault: "${VAULT}",
+      notifications: null,
+      events: null,
+      scim: null,
+      send: "${VAULT}",
+    },
+  },
+];`,
+  );
+  // Legacy vanity-redirect special case for Bitwarden's own send domain — dead for FastVault
+  // (our region's send URL is VAULT, not this literal), but still a residual brand reference.
+  replaceExact(
+    "libs/common/src/platform/services/default-environment.service.ts",
+    `if (this.urls.send === "https://send.bitwarden.com") {`,
+    `if (this.urls.send === "https://send.fastvault.app") {`,
+  );
+
+  // Desktop menus and identity
+  const help = "apps/desktop/src/main/menu/menu.help.ts";
+  replaceExact(
+    help,
+    `      this.separator,\n      this.followUs,\n      this.separator,\n      this.goToWebVault,`,
+    `      this.separator,\n      this.goToWebVault,`,
+  );
+  replaceExact(
+    help,
+    `      submenu: this.getMobileAppSubmenu,`,
+    `      click: () => this.shell.openExternal("${SITE}/apps", UrlType.WebUrl),`,
+  );
+  replaceExact(
+    help,
+    `      submenu: this.getBrowserExtensionSubmenu,`,
+    `      click: () => this.shell.openExternal("${SITE}/apps", UrlType.WebUrl),`,
+  );
+  replaceExact(
+    help,
+    `"https://github.com/bitwarden/clients/issues"`,
+    `"https://github.com/${REPO}/issues"`,
+  );
+  replaceExact(help, `"https://bitwarden.com/help"`, `"${SITE}/support"`);
+  replaceExact(
+    "apps/desktop/src/main/menu/menu.main.ts",
+    `const cloudWebVaultUrl = "https://vault.bitwarden.com";`,
+    `const cloudWebVaultUrl = "${VAULT}";`,
+  );
+  replaceExact(
+    "apps/desktop/src/main/menu/menu.bitwarden.ts",
+    `readonly label: string = "Bitwarden";`,
+    `readonly label: string = "FastVault";`,
+  );
+  const about = "apps/desktop/src/main/menu/menu.about.ts";
+  replaceExact(
+    about,
+    `          title: "Bitwarden",\n          message: "Bitwarden",`,
+    `          title: "FastVault",\n          message: "FastVault",`,
+  );
+  replaceExact(
+    about,
+    `          "\\nArchitecture " +\n          process.arch;`,
+    `          "\\nArchitecture " +\n          process.arch +\n          "\\n\\n" +\n          this.localize("fastvaultAttribution");`,
+  );
+  const main = "apps/desktop/src/main.ts";
+  replaceExact(main, `"bitwarden-appdata"`, `"fastvault-appdata"`);
+  replaceExact(
+    main,
+    `app.removeAsDefaultProtocolClient("bitwarden");`,
+    `app.removeAsDefaultProtocolClient("fastvault");`,
+  );
+  replaceExact(
+    main,
+    `app.setAsDefaultProtocolClient("bitwarden", process.execPath, [`,
+    `app.setAsDefaultProtocolClient("fastvault", process.execPath, [`,
+  );
+  replaceExact(
+    main,
+    `app.setAsDefaultProtocolClient("bitwarden");`,
+    `app.setAsDefaultProtocolClient("fastvault");`,
+  );
+  replaceExact(
+    main,
+    `.filter((s) => s.indexOf("bitwarden://") === 0)`,
+    `.filter((s) => s.indexOf("fastvault://") === 0)`,
+  );
+  // Windows Credential Manager service name for the biometric key — separate from the official app's "Bitwarden" entries (line ~306)
+  replaceExact(
+    main,
+    `new DesktopCredentialStorageListener(\n      "Bitwarden",`,
+    `new DesktopCredentialStorageListener(\n      "FastVault",`,
+  );
+  replaceExact(main, `this.trayMain.init("Bitwarden", [`, `this.trayMain.init("FastVault", [`);
+  replaceExact(
+    "apps/desktop/src/utils.ts",
+    `userAgentItem("Bitwarden", " ")`,
+    `userAgentItem("FastVault", " ")`,
+  );
+
+  // Native messaging bridge (host name + allow-lists)
+  const nm = "apps/desktop/src/main/native-messaging.main.ts";
+  replaceRegexMin(nm, /com\.8bit\.bitwarden/g, "app.fastvault.desktop", 10);
+  replaceExact(
+    nm,
+    `description: "Bitwarden desktop <-> browser bridge",`,
+    `description: "FastVault desktop <-> browser bridge",`,
+    2,
+  );
+  replaceExact(
+    nm,
+    `allowed_extensions: ["{446900e4-71c2-419f-a6a7-df9c091e268b}"],`,
+    `allowed_extensions: ["${FIREFOX_ID}"],`,
+  );
+  replaceBlock(
+    nm,
+    `    const ids: Set<string> = new Set([`,
+    `]);`,
+    `    const ids: Set<string> = new Set([\n${CHROME_IDS.map((id) => `      "${id}",`).join("\n")}\n    ]);`,
+  );
+
+  // URL schemes used by callbacks (SSO / Duo / LastPass — see spec §7)
+  replaceExact(
+    "libs/auth/src/common/services/sso-redirect/sso-url.service.ts",
+    `"bitwarden://sso-callback"`,
+    `"fastvault://sso-callback"`,
+  );
+  replaceRegexMin(
+    "apps/desktop/src/app/app.component.ts",
+    /bitwarden:\/\/(sso-cookie-vendor|duo-callback|import-callback-lp)/g,
+    "fastvault://$1",
+    3,
+  );
+  replaceRegexMin(
+    "libs/importer/src/components/lastpass/lastpass-direct-import.service.ts",
+    /bitwarden:\/\//g,
+    "fastvault://",
+    2,
+  );
+
+  // Generic link rules across the apps and libs (counts printed; each must fire)
+  const rules = [
+    [/https:\/\/bitwarden\.com\/help\/?[^"'`)\s]*/g, `${SITE}/support`],
+    [/https:\/\/bitwarden\.com\/terms\/?/g, `${SITE}/legal/terms`],
+    [/https:\/\/bitwarden\.com\/privacy\/?/g, `${SITE}/legal/privacy`],
+    [/https:\/\/bitwarden\.com\/download\/?[^"'`)\s]*/g, `${SITE}/apps`],
+    [/https:\/\/bitwarden\.com\/browser-start\/?/g, `${SITE}/apps`],
+    [/https:\/\/bitwarden\.com\/products\/[^"'`)\s]*/g, `${SITE}/`],
+    [/https:\/\/bitwarden\.com\/email-preferences/g, `${SITE}/legal/privacy`],
+    [/https:\/\/bitwarden\.com\/go\/[^"'`)\s]*/g, `${SITE}/pricing`],
+    [/https:\/\/bitwarden\.com\/contact\/?/g, `${SITE}/support`],
+    [/https:\/\/blog\.bitwarden\.com\/?/g, `${SITE}`],
+  ];
+  const targets = [
+    "apps/desktop/src",
+    "apps/browser/src",
+    "libs/auth/src",
+    "libs/angular/src",
+    "libs/vault/src",
+    "libs/components/src",
+    "libs/key-management",
+  ];
+  const fired = rules.map(() => 0);
+  for (const t of targets)
+    for (const f of walk(t, (p) => /\.(ts|html)$/.test(p) && !/\.(spec|stories)\.ts$/.test(p))) {
+      let s = read(f),
+        changed = false;
+      rules.forEach(([re, to], i) => {
+        const n = (s.match(re) || []).length;
+        if (n) {
+          s = s.replace(re, to);
+          fired[i] += n;
+          changed = true;
+        }
+      });
+      if (changed) write(f, s);
+    }
+  rules.forEach(([re], i) => {
+    if (!fired[i]) fail(`link rule never fired: ${re}`);
+    log(`link rule ${re} fired ${fired[i]}x`);
+  });
+
+  // Theme (spec §4.6) — brand scale once, primary/background per theme block
+  const css = "libs/components/src/tw-theme.css";
+  const brand = {
+    "050": ["#eef6ff", "#EEF5F2"],
+    100: ["#dbeafe", "#DCEFE7"],
+    200: ["#bedbff", "#B7E3D2"],
+    300: ["#8ec5ff", "#86D6B8"],
+    400: ["#6baefa", "#55CBA1"],
+    500: ["#418bfb", "#2BBE8B"],
+    600: ["#2a70f4", "#22A879"],
+    700: ["#175ddc", "#0B6E52"],
+    800: ["#0d43af", "#0A5A44"],
+    900: ["#0c3276", "#0D3F33"],
+    950: ["#162455", "#08201C"],
+  };
+  for (const [k, [o, n]] of Object.entries(brand))
+    replaceExact(css, `--color-brand-${k}: ${o};`, `--color-brand-${k}: ${n};`);
+  replaceExact(css, `--color-brand-950-rgb: 22, 36, 85;`, `--color-brand-950-rgb: 8, 32, 28;`);
+  const triplets = [
+    ["--color-primary-100: 219 229 246;", "--color-primary-100: 220 239 231;"],
+    ["--color-primary-300: 121 161 233;", "--color-primary-300: 134 214 184;"],
+    ["--color-primary-600: 23 93 220;", "--color-primary-600: 11 110 82;"],
+    ["--color-primary-700: 26 65 172;", "--color-primary-700: 10 90 68;"],
+    ["--color-background-alt2: 23 92 219;", "--color-background-alt2: 11 110 82;"],
+    ["--color-background-alt3: 22 55 146;", "--color-background-alt3: 13 63 51;"],
+    ["--color-background-alt4: 2 15 102;", "--color-background-alt4: 8 32 28;"],
+    ["--color-primary-100: 29 46 99;", "--color-primary-100: 13 63 51;"],
+    ["--color-primary-300: 26 65 172;", "--color-primary-300: 11 110 82;"],
+    ["--color-primary-600: 101 171 255;", "--color-primary-600: 43 190 139;"],
+    ["--color-primary-700: 170 195 239;", "--color-primary-700: 134 214 184;"],
+  ];
+  for (const [o, n] of triplets) replaceExact(css, o, n);
+}
+
 // ---------- 5. verify ----------
 const ALLOWED_BRAND_KEYS = new Set(["fastvaultAttribution", "getMobileApp"]);
 const ALLOWED_URL_FILES = [
@@ -225,7 +513,7 @@ function verify() {
 // ---------- main ----------
 applyAssets();
 applyStrings();
-if (typeof applyConfig === "function") applyConfig(); // Task 4
-if (typeof applyCode === "function") applyCode(); // Task 4
+applyConfig();
+applyCode();
 verify();
 log(DRY ? "dry run complete" : `applied FastVault ${VERSION} overlay`);
