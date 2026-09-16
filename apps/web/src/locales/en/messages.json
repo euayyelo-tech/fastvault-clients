@@ -1254,7 +1254,7 @@
   },
   "moreSharedFoldersShownAbove": {
     "message": "$COUNT$ more shared folders shown above this button",
-    "description": "Screen-reader-only text on the button that expands a collapsed grid of shared folders, read out after its label. The revealed shared folders render above the button.",
+    "description": "Announced to screen readers when a collapsed grid of shared folders is expanded. The revealed shared folders render above the button that expanded them.",
     "placeholders": {
       "count": {
         "content": "$1",
@@ -1264,7 +1264,7 @@
   },
   "moreSharedFoldersShownAboveSingular": {
     "message": "1 more shared folder shown above this button",
-    "description": "Screen-reader-only text on the button that expands a collapsed grid of shared folders, read out after its label. The revealed shared folders render above the button."
+    "description": "Announced to screen readers when a collapsed grid of shared folders is expanded. The revealed shared folders render above the button that expanded them."
   },
   "myFolder": {
     "message": "My folder"
