@@ -217,6 +217,12 @@ function applyConfig() {
     j.snap.description = "Password manager.";
     if (!j.win.extraFiles?.some((e) => e.to === "bitwarden_chromium_import_helper.exe"))
       fail("electron-builder.json: chromium import helper entry moved");
+    // Linux polkit action-prefix must match the renamed action id in os-biometrics-linux.service.ts
+    // (com.bitwarden.Bitwarden.unlock -> app.fastvault.desktop.unlock) or the snap-packaged build's
+    // declared polkit permission won't match what the app actually requests at runtime.
+    const polkitPlug = j.snap.plugs?.find((p) => p && typeof p === "object" && p.polkit);
+    if (!polkitPlug) fail("electron-builder.json: snap polkit plug entry moved");
+    polkitPlug.polkit["action-prefix"] = "app.fastvault.desktop";
   });
   editJson("apps/desktop/package.json", (j) => {
     j.version = VERSION;
@@ -359,6 +365,11 @@ function applyCode() {
   );
   replaceExact(
     nm,
+    `description: "Bitwarden desktop <-> DuckDuckGo bridge",`,
+    `description: "FastVault desktop <-> DuckDuckGo bridge",`,
+  );
+  replaceExact(
+    nm,
     `allowed_extensions: ["{446900e4-71c2-419f-a6a7-df9c091e268b}"],`,
     `allowed_extensions: ["${FIREFOX_ID}"],`,
   );
@@ -367,6 +378,75 @@ function applyCode() {
     `    const ids: Set<string> = new Set([`,
     `]);`,
     `    const ids: Set<string> = new Set([\n${CHROME_IDS.map((id) => `      "${id}",`).join("\n")}\n    ]);`,
+  );
+
+  // SSO localhost callback page (shown in the user's default browser after login completes)
+  const ssoCallback = "apps/desktop/src/auth/services/sso-localhost-callback.service.ts";
+  replaceExact(
+    ssoCallback,
+    `"<html><head><title>Success | Bitwarden Desktop</title></head><body>"`,
+    `"<html><head><title>Success | FastVault Desktop</title></head><body>"`,
+  );
+  replaceExact(
+    ssoCallback,
+    `"<h1>Successfully authenticated with the Bitwarden desktop app</h1>"`,
+    `"<h1>Successfully authenticated with the FastVault desktop app</h1>"`,
+  );
+  replaceExact(
+    ssoCallback,
+    `"<html><head><title>Failed | Bitwarden Desktop</title></head><body>"`,
+    `"<html><head><title>Failed | FastVault Desktop</title></head><body>"`,
+  );
+  replaceExact(
+    ssoCallback,
+    `"<h1>Something went wrong logging into the Bitwarden desktop app</h1>"`,
+    `"<h1>Something went wrong logging into the FastVault desktop app</h1>"`,
+  );
+
+  // Biometric key OS-credential-store service name — separate namespace from the general
+  // "FastVault" keytar prefix (main.ts) and from the official app's own storage, to avoid
+  // colliding with a real Bitwarden install's biometric key on the same machine.
+  replaceExact(
+    "apps/desktop/src/key-management/biometrics/os-biometrics-mac.service.ts",
+    `const SERVICE = "Bitwarden_biometric";`,
+    `const SERVICE = "FastVault_biometric";`,
+  );
+  replaceExact(
+    "apps/desktop/src/key-management/biometrics/os-biometrics-mac.service.spec.ts",
+    `const serviceName = "Bitwarden_biometric";`,
+    `const serviceName = "FastVault_biometric";`,
+  );
+  replaceExact(
+    "apps/desktop/src/platform/main/desktop-credential-storage-listener.ts",
+    `if (serviceName == "Bitwarden_biometric") {`,
+    `if (serviceName == "FastVault_biometric") {`,
+  );
+
+  // Linux polkit policy for biometric unlock — both the action id/filename (must match the
+  // snap "action-prefix" set in applyConfig(), and must not collide with a real Bitwarden
+  // install's own /usr/share/polkit-1/actions/ policy file) and the text shown in the OS auth
+  // prompt itself.
+  const linuxBiometrics =
+    "apps/desktop/src/key-management/biometrics/native-v2/os-biometrics-linux.service.ts";
+  replaceExact(
+    linuxBiometrics,
+    `<action id="com.bitwarden.Bitwarden.unlock">`,
+    `<action id="app.fastvault.desktop.unlock">`,
+  );
+  replaceExact(
+    linuxBiometrics,
+    `<description>Unlock Bitwarden</description>`,
+    `<description>Unlock FastVault</description>`,
+  );
+  replaceExact(
+    linuxBiometrics,
+    `<message>Authenticate to unlock Bitwarden</message>`,
+    `<message>Authenticate to unlock FastVault</message>`,
+  );
+  replaceExact(
+    linuxBiometrics,
+    `const policyFileName = "com.bitwarden.Bitwarden.policy";`,
+    `const policyFileName = "app.fastvault.desktop.policy";`,
   );
 
   // URL schemes used by callbacks (SSO / Duo / LastPass — see spec §7)
@@ -473,6 +553,30 @@ const ALLOWED_URL_FILES = [
   /lastpass-direct-import\.service\.ts$/,
   /\/importers\//,
 ];
+// Exact-string opt-outs for the code literal-string check below: never-displayed internal
+// identifiers that still contain "Bitwarden" as a substring. Each would need a change outside
+// this task's scope to fix correctly (not a simple anchored rename), and none leak the brand to
+// a user:
+const ALLOWED_LITERAL_STRINGS = new Set([
+  // Angular template binding to the shield SVG's exported symbol name. The icon's own content
+  // is already FastVault-branded (Task 3's applyAssets()); renaming the TS export itself would
+  // require also editing libs/components/src/navigation/nav-logo.component.ts, which is outside
+  // this task's file scope.
+  `"Icons.BitwardenShield"`,
+  // i18n lookup keys — not the displayed message text (applyStrings() already renamed every
+  // .message value). Renaming the key itself means renaming it in all 66 locale files plus every
+  // this.localize(key) / { key: ... } call site; a different class of change than an anchored
+  // literal-string replace.
+  `"closeThisBitwardenWindow"`,
+  `"aboutBitwarden"`,
+  `"hideBitwarden"`,
+  `"quitBitwarden"`,
+  // Detects Bitwarden's own registered Microsoft Store package family name, not FastVault's —
+  // and is dead code for FastVault regardless, since applyConfig() already drops "appx" from
+  // electron-builder.json's win.target, so FastVault never produces an MSIX/Store build this
+  // check could match.
+  `"8bitSolutionsLLC.BitwardenBeta_"`,
+]);
 function verify() {
   const problems = [];
   for (const { dir } of LOCALE_DIRS) {
@@ -486,7 +590,8 @@ function verify() {
     const s = read(f);
     for (const m of s.matchAll(/https?:\/\/[a-z0-9.-]*bitwarden\.(com|eu|net)[^\s"'`)]*/g))
       problems.push(`${f}: ${m[0]}`);
-    if (/"Bitwarden"/.test(s)) problems.push(`${f}: literal "Bitwarden"`);
+    for (const m of s.matchAll(/"[^"\n]*Bitwarden[^"\n]*"/g))
+      if (!ALLOWED_LITERAL_STRINGS.has(m[0])) problems.push(`${f}: literal ${m[0]}`);
   }
   for (const f of [
     "libs/auth",
