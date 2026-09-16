@@ -1,0 +1,56 @@
+name: FastVault desktop (Windows)
+on:
+  push:
+    branches: [fastvault]
+    tags: ["fastvault-desktop-v*"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-2022
+    env:
+      NODE_OPTIONS: --max_old_space_size=4096
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: "**/package-lock.json" }
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: "apps/desktop/desktop_native -> target" }
+      - run: rustup show
+        working-directory: apps/desktop/desktop_native
+      - run: npm ci
+      - run: node fastvault/apply.mjs
+        env:
+          AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
+      - run: node build.js --release
+        working-directory: apps/desktop/desktop_native
+      - run: npm run build
+        working-directory: apps/desktop
+      - run: npx electron-builder --win nsis portable --x64 -p never
+        working-directory: apps/desktop
+        env:
+          AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastvault-desktop-windows
+          path: |
+            apps/desktop/dist/FastVault-*.exe
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest.yml
+      - if: startsWith(github.ref, 'refs/tags/fastvault-desktop-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FastVault Desktop ${{ github.ref_name }}
+          body: "Windows x64. Based on bitwarden/clients desktop-v2026.7.0 (see fastvault/UPSTREAM). Unsigned until code signing is configured."
+          files: |
+            apps/desktop/dist/FastVault-*.exe
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest.yml
