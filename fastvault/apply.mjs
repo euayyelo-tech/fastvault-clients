@@ -286,6 +286,17 @@ function applyCode() {
     `if (this.urls.send === "https://send.fastvault.app") {`,
   );
 
+  // Desktop window <title>. window.main.ts sets the BrowserWindow's initial title from
+  // app.name (already correct — see the page-title-updated guard below), but Electron lets the
+  // loaded page's document.title override it once the page finishes loading, and that title is
+  // sourced from this hardcoded HTML tag — so the correct initial title got silently clobbered
+  // with "Bitwarden" the moment the Angular app loaded.
+  replaceExact(
+    "apps/desktop/src/index.html",
+    `<title>Bitwarden</title>`,
+    `<title>FastVault</title>`,
+  );
+
   // Desktop menus and identity
   const help = "apps/desktop/src/main/menu/menu.help.ts";
   replaceExact(
@@ -363,6 +374,14 @@ function applyCode() {
     "apps/desktop/src/utils.ts",
     `userAgentItem("Bitwarden", " ")`,
     `userAgentItem("FastVault", " ")`,
+  );
+  // Block the loaded page's document.title (index.html's <title>, renamed above) from ever
+  // overriding the BrowserWindow's title (set correctly from app.name a few lines up) again —
+  // the more permanent fix for the bug class, not just this one string.
+  replaceExact(
+    "apps/desktop/src/main/window.main.ts",
+    `        devTools: isDev(),\n      },\n    });\n\n    if (template === "modal-app") {`,
+    `        devTools: isDev(),\n      },\n    });\n\n    this.win.on("page-title-updated", (event) => event.preventDefault());\n\n    if (template === "modal-app") {`,
   );
 
   // Native messaging bridge (host name + allow-lists)
