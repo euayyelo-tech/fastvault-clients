@@ -62,12 +62,17 @@ function replaceBlock(file, start, end, replacement) {
   write(file, lines.join("\n"));
   log(`${file}: replaced block ${start} .. ${end} (${j - i + 1} lines)`);
 }
-// replaceRegexMin: at least `min` replacements across the file.
+// replaceRegexMin: at least `min` replacements across the file. Requires (coerces to) a global regex —
+// without the `g` flag, String#match returns one match (or its capture groups, miscounting) and
+// String#replace touches only the first occurrence, silently breaking the anchored-replacement contract.
 function replaceRegexMin(file, re, to, min = 1) {
+  const g = re.global
+    ? re
+    : new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
   const s = read(file);
-  const n = (s.match(re) || []).length;
-  if (n < min) fail(`${file}: expected >=${min} match(es) of ${re}, found ${n}`);
-  write(file, s.replace(re, to));
+  const n = (s.match(g) || []).length;
+  if (n < min) fail(`${file}: expected >=${min} match(es) of ${g}, found ${n}`);
+  write(file, s.replace(g, to));
   return n;
 }
 function editJson(file, fn) {
