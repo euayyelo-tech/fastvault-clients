@@ -228,6 +228,17 @@ function applyConfig() {
     j.version = VERSION;
     j.description = "FastVault password manager";
   });
+  // apps/desktop/src/package.json is copied by webpack (CopyWebpackPlugin, webpack.base.js)
+  // into build/package.json, the manifest actually bundled into the packaged app. It is what
+  // Electron's app.getVersion() reads at runtime, so it (not apps/desktop/package.json above)
+  // is what electron-updater compares against latest.yml's version. Left un-patched it silently
+  // pins every build's reported version to upstream's 2026.7.0 forever, breaking auto-update.
+  editJson("apps/desktop/src/package.json", (j) => {
+    j.productName = "FastVault";
+    j.description = "FastVault password manager";
+    j.version = VERSION;
+    j.homepage = SITE;
+  });
   editJson("apps/browser/src/manifest.json", (j) => {
     j.short_name = "FastVault";
     j.version = VERSION;
