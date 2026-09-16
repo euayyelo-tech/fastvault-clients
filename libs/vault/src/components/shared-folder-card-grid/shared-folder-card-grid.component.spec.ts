@@ -464,7 +464,77 @@ describe("SharedFolderCardGridComponent", () => {
     });
   });
 
+  describe("focus on the trigger", () => {
+    it("replaces the trigger and focuses the replacement when the overflow is revealed", async () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 1));
+      const before = trigger()!;
+      before.focus();
+
+      before.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(trigger()).not.toBe(before);
+      expect(before.isConnected).toBe(false);
+      expect(document.activeElement).toBe(trigger());
+    });
+
+    it("replaces the trigger and focuses the replacement when the overflow is hidden again", async () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 1), scopeTo(PARENT.id), {
+        initiallyExpanded: true,
+      });
+      const before = trigger()!;
+      before.focus();
+
+      before.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(trigger()).not.toBe(before);
+      expect(document.activeElement).toBe(trigger());
+    });
+
+    // A pointer click leaves focus where it was in Safari, and answering it by taking focus would
+    // move the user out of whatever they were on.
+    it("leaves focus alone when the trigger does not hold it", async () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 1));
+      const elsewhere = cards()[0];
+      elsewhere.focus();
+
+      trigger()!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(document.activeElement).toBe(elsewhere);
+    });
+
+    it("keeps the replacement labelled and wired to the grid it controls", async () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 1));
+      const gridId = fixture.nativeElement.querySelector("ul").id;
+
+      trigger()!.focus();
+      trigger()!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      const replacement = trigger()!;
+      expect(replacement.textContent?.trim()).toBe("showLess");
+      expect(replacement.getAttribute("aria-expanded")).toBe("true");
+      expect(replacement.getAttribute("aria-controls")).toBe(gridId);
+      expect(replacement.querySelector("i")?.classList).toContain("bwi-angle-up");
+    });
+  });
+
   describe("announcing expansion", () => {
+    /** Where focus sat each time the grid announced something. */
+    function focusWhenAnnounced(): (Element | null)[] {
+      const active: (Element | null)[] = [];
+      liveAnnouncer.announce.mockImplementation(async () => {
+        active.push(document.activeElement);
+      });
+      return active;
+    }
+
     it("announces how many rows were revealed above the trigger", () => {
       createComponent(children(COLLAPSED_CARD_COUNT + 4));
 
@@ -475,6 +545,53 @@ describe("SharedFolderCardGridComponent", () => {
         "moreSharedFoldersShownAbove:4",
         "polite",
       );
+    });
+
+    // The replacement trigger taking focus is itself announced, and a message already waiting when
+    // that happens is dropped rather than read out after it.
+    it("announces after handing focus to the replacement trigger", async () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 4));
+      const active = focusWhenAnnounced();
+      trigger()!.focus();
+
+      trigger()!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(liveAnnouncer.announce).toHaveBeenCalledWith(
+        "moreSharedFoldersShownAbove:4",
+        "polite",
+      );
+      expect(active).toEqual([trigger()]);
+    });
+
+    it("still announces when the trigger was clicked without holding focus", async () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 4));
+      const active = focusWhenAnnounced();
+
+      trigger()!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(liveAnnouncer.announce).toHaveBeenCalledWith(
+        "moreSharedFoldersShownAbove:4",
+        "polite",
+      );
+      expect(active).toEqual([document.body]);
+    });
+
+    it("does not announce when the trigger holding focus collapses the grid", async () => {
+      createComponent(children(COLLAPSED_CARD_COUNT + 4), scopeTo(PARENT.id), {
+        initiallyExpanded: true,
+      });
+      trigger()!.focus();
+
+      trigger()!.click();
+      fixture.detectChanges();
+      await fixture.whenStable();
+
+      expect(liveAnnouncer.announce).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(trigger());
     });
 
     it("does not announce on the initial collapsed render", () => {

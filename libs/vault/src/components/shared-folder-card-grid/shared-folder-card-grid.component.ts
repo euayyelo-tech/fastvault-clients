@@ -1,10 +1,12 @@
 import { LiveAnnouncer } from "@angular/cdk/a11y";
-import { NgTemplateOutlet } from "@angular/common";
+import { DOCUMENT, NgTemplateOutlet } from "@angular/common";
 import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
   ElementRef,
+  Injector,
+  afterNextRender,
   computed,
   effect,
   inject,
@@ -110,6 +112,8 @@ type SharedFolderCard = {
 export class SharedFolderCardGridComponent {
   private readonly i18nService = inject(I18nService);
   private readonly liveAnnouncer = inject(LiveAnnouncer);
+  private readonly injector = inject(Injector);
+  private readonly document = inject(DOCUMENT);
 
   /**
    * The collections of the vault in view, narrowed to it by the host — the grid can never surface
@@ -139,6 +143,15 @@ export class SharedFolderCardGridComponent {
 
   /** The list the cards render into. Absent whenever the grid renders nothing. */
   private readonly gridList = viewChild<ElementRef<HTMLElement>>("gridList");
+
+  /**
+   * The overflow trigger, as of the last render — a toggle replaces it. Absent whenever the
+   * children fit in the rows on show.
+   *
+   * Read as an `ElementRef`: `bitLink` is a component rather than a directive, so the query would
+   * otherwise resolve to it instead of the button it is applied to.
+   */
+  private readonly toggle = viewChild("toggle", { read: ElementRef<HTMLButtonElement> });
 
   /**
    * The width of the grid itself, in px, kept current as the window resizes. 0 until first measured.
@@ -298,20 +311,44 @@ export class SharedFolderCardGridComponent {
   );
 
   protected toggleExpanded() {
+    const triggerHeldFocus = this.document.activeElement === this.toggle()?.nativeElement;
+
     this.expanded.update((expanded) => !expanded);
 
-    if (!this.expanded()) {
+    // The grid sits above its own trigger, so the cards that just appeared are behind the user's
+    // focus and would otherwise go unnoticed by a screen reader. Only revealing announces: a grid
+    // the trigger has just collapsed has nothing above to point back at.
+    const revealed = this.expanded() ? this.revealedMessage() : undefined;
+
+    if (!triggerHeldFocus) {
+      this.announce(revealed);
       return;
     }
 
-    // The grid sits above its own trigger, so the cards that just appeared are behind the user's
-    // focus and would otherwise go unnoticed by a screen reader. Only the toggle announces: a grid
-    // the host renders expanded has revealed nothing, so there is nothing to point back at.
-    const overflowCardsCount = this.overflowCards().length;
-    const message =
-      overflowCardsCount === 1
-        ? this.i18nService.t("moreSharedFoldersShownAboveSingular")
-        : this.i18nService.t("moreSharedFoldersShownAbove", overflowCardsCount);
+    afterNextRender(
+      () => {
+        this.toggle()?.nativeElement.focus();
+        // Queued behind the focus change rather than ahead of it: the replacement trigger taking
+        // focus is itself announced, and a message already waiting when that happens is dropped
+        // rather than read out after it.
+        this.announce(revealed);
+      },
+      { injector: this.injector },
+    );
+  }
+
+  /** How many cards the last reveal added above the trigger. */
+  private revealedMessage(): string {
+    const count = this.overflowCards().length;
+    return count === 1
+      ? this.i18nService.t("moreSharedFoldersShownAboveSingular")
+      : this.i18nService.t("moreSharedFoldersShownAbove", count);
+  }
+
+  private announce(message: string | undefined) {
+    if (message == null) {
+      return;
+    }
 
     void this.liveAnnouncer.announce(message, "polite");
   }
