@@ -208,7 +208,7 @@ function applyConfig() {
     j.nsis = {
       ...j.nsisWeb,
       artifactName: "FastVault-Installer-${version}.${ext}",
-      license: "LICENSE_GPL.txt",
+      license: "../../LICENSE_GPL.txt",
     };
     delete j.nsisWeb;
     j.portable.artifactName = "FastVault-Portable-${version}.${ext}";
