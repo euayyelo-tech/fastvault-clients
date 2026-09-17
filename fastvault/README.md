@@ -64,6 +64,15 @@ building if it does not — a mismatch would publish a release whose
 releasing is: bump `version.txt`, commit, push the branch, then push the
 matching `fastvault-desktop-vX.Y.Z` tag.
 
+**If a release comes out partial or fails** (e.g. one platform's build
+failed, or an asset didn't upload), the supported recovery is to delete
+the tag and its release, then re-push the same tag — not to try to re-run
+only the failed job. Deleting and re-pushing reruns both the `windows`
+and `linux` builds fresh (~10 minutes) and `softprops/action-gh-release`
+updates the existing release in place, so the result is a clean, fully
+consistent release built from one tree, rather than mixing artifacts from
+two different runs.
+
 Five real releases exist today:
 [fastvault-desktop-v2026.7.0](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.0),
 [fastvault-desktop-v2026.7.1](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.1),
@@ -182,6 +191,12 @@ Carried over as-is from the design spec (`C:\Projects\fastvault\docs\superpowers
 - **Passkey login ("Log in with passkey")** isn't implemented by
   Vaultwarden; the button behaves exactly as it does in the official app
   today (errors).
+- **Browser integration, if you also have the official Bitwarden app
+  installed:** don't enable browser integration in FastVault while the
+  official Bitwarden desktop app is also installed and signed in on the
+  same account — they currently share an internal identifier on
+  Linux/macOS that could let one app's browser bridge reach the other's,
+  though each app's own extension allow-list blocks the actual data path.
 
 ## Signing
 
