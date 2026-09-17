@@ -116,6 +116,22 @@ function replaceBlock(file, start, end, replacement) {
   write(file, lines.join("\n"));
   log(`${file}: replaced block ${start} .. ${end} (${j - i + 1} lines)`);
 }
+// removeElement: delete the nearest `open`..`close` block (default <bit-item>..</bit-item>) that
+// wraps the single line containing `anchor`. Walks up/down from that line rather than matching the
+// anchor's own block directly, since the anchor is inside the block, not the block's boundary.
+function removeElement(file, anchor, open = "<bit-item>", close = "</bit-item>") {
+  const lines = read(file).split("\n");
+  const hits = lines.map((l, i) => (l.includes(anchor) ? i : -1)).filter((i) => i >= 0);
+  if (hits.length !== 1) fail(`${file}: expected 1 line with ${anchor}, found ${hits.length}`);
+  let a = hits[0],
+    b = hits[0];
+  while (a >= 0 && lines[a].trim() !== open) a--;
+  while (b < lines.length && lines[b].trim() !== close) b++;
+  if (a < 0 || b >= lines.length) fail(`${file}: ${open}/${close} not found around ${anchor}`);
+  lines.splice(a, b - a + 1);
+  write(file, lines.join("\n"));
+  log(`${file}: removed ${open} block around ${anchor} (${b - a + 1} lines)`);
+}
 // replaceRegexMin: at least `min` replacements across the file. Requires (coerces to) a global regex —
 // without the `g` flag, String#match returns one match (or its capture groups, miscounting) and
 // String#replace touches only the first occurrence, silently breaking the anchored-replacement contract.
@@ -834,16 +850,10 @@ function applyCode() {
       `"protectedBy" | i18n: "Bitwarden phishing blocker"`,
       `"protectedBy" | i18n: "FastVault phishing blocker"`,
     ],
-    [
-      "apps/browser/src/tools/popup/settings/about-dialog/about-dialog.component.html",
-      `  <div bitDialogTitle>Bitwarden</div>`,
-      `  <div bitDialogTitle>FastVault</div>`,
-    ],
-    [
-      "apps/browser/src/tools/popup/settings/about-dialog/about-dialog.component.html",
-      `    <p>&copy; Bitwarden Inc. 2015-{{ year }}</p>`,
-      `    <p>&copy; FSITES LTD. {{ year }}</p>\n    <p>{{ "fastvaultAttribution" | i18n }}</p>`,
-    ],
+    // about-dialog.component.html's title + copyright/attribution lines: owned by applyBrowser()
+    // (Task 1), not here — it rewrites the same two lines with the final wording (an <small>-wrapped
+    // attribution paragraph). A duplicate anchor here would already be consumed by the time
+    // applyBrowser() runs (applyCode() always runs first) and fail with a false "0 matches".
   ])
     replaceExact(f, from, to);
   // Console/log lines naming the desktop app the extension talks to (comments included).
@@ -931,6 +941,129 @@ function applyCode() {
     ["--color-primary-700: 170 195 239;", "--color-primary-700: 134 214 184;"],
   ];
   for (const [o, n] of triplets) replaceExact(css, o, n);
+}
+
+// ---------- 4b. browser ----------
+function applyBrowser() {
+  const G = "branding/generated/browser";
+  for (const s of [16, 19, 32, 38, 48, 96, 128]) {
+    copy(`${G}/icon${s}.png`, `apps/browser/src/images/icon${s}.png`);
+    copy(`${G}/icon${s}_gray.png`, `apps/browser/src/images/icon${s}_gray.png`);
+  }
+  for (const s of [19, 38])
+    copy(`${G}/icon${s}_locked.png`, `apps/browser/src/images/icon${s}_locked.png`);
+  copy(
+    "branding/generated/desktop/logo-dark@2x.png",
+    "apps/browser/src/popup/images/logo-dark@2x.png",
+  );
+  copy(
+    "branding/generated/desktop/logo-white@2x.png",
+    "apps/browser/src/popup/images/logo-white@2x.png",
+  );
+  for (const f of ["chrome-icon128.png", "icon64.png", "windows-icon300.png"])
+    copy(`${G}/store/${f}`, `apps/browser/store/icons/${f}`);
+
+  // Popup document <title> (webpack's HtmlWebpackPlugin renders this .ejs template into
+  // popup/index.html). REWRITE_ROOTS' walk only visits .ts/.html, so this .ejs file — the only one
+  // in scope — is invisible to both applyCode()'s generic title sweep and verify()'s residual scan;
+  // found live in the built popup/index.html via the post-build "Bitwarden" grep. Same fix as the
+  // other extension-surface <title> tags a few lines below, just anchored here since walk() can't
+  // reach it.
+  replaceExact(
+    "apps/browser/src/popup/index.ejs",
+    `<title>Bitwarden</title>`,
+    `<title>FastVault</title>`,
+  );
+
+  // Inline autofill menu logo (injected into web pages)
+  const icons = "apps/browser/src/autofill/utils/svg-icons.ts";
+  const ours = readFileSync(join(FV, "branding/inline-menu-icons.ts"), "utf8").trim();
+  const s = read(icons);
+  const re =
+    /export const logoIcon =\n\s+'<svg[^\n]*';\n\nexport const logoLockedIcon =\n\s+'<svg[^\n]*';/;
+  if (!re.test(s)) fail(`${icons}: logoIcon/logoLockedIcon block not found`);
+  write(icons, s.replace(re, ours));
+  log(`${icons}: inline-menu logos replaced`);
+
+  // About dialog + About page + settings trims
+  const dlg = "apps/browser/src/tools/popup/settings/about-dialog/about-dialog.component.html";
+  replaceExact(dlg, `<div bitDialogTitle>Bitwarden</div>`, `<div bitDialogTitle>FastVault</div>`);
+  replaceExact(
+    dlg,
+    `<p>&copy; Bitwarden Inc. 2015-{{ year }}</p>`,
+    `<p>&copy; FSITES LTD {{ year }}</p>\n    <p><small>{{ "fastvaultAttribution" | i18n }}</small></p>`,
+  );
+  const about = "apps/browser/src/tools/popup/settings/about-page/about-page-v2.component.html";
+  removeElement(about, `(click)="rate()"`); // the "Rate extension" item
+  const settings = "apps/browser/src/tools/popup/settings/settings-v2.component.html";
+  removeElement(settings, `routerLink="/download-bitwarden"`);
+  removeElement(settings, `routerLink="/more-from-bitwarden"`);
+
+  // Desktop bridge host name (2 call sites)
+  for (const f of [
+    "apps/browser/src/background/nativeMessaging.background.ts",
+    "apps/browser/src/platform/ipc/ipc-background.service.ts",
+  ])
+    replaceExact(
+      f,
+      `connectNative("com.8bit.bitwarden")`,
+      `connectNative("app.fastvault.desktop")`,
+    );
+
+  // Manifest fields verify() cannot see (JSON, not .ts/.html): the toolbar/sidebar tooltip text
+  // and the extension author, both shown directly in the browser chrome (toolbar hover, sidebar
+  // hover, extension-management page) — found via the post-build "Bitwarden" grep, not anchored
+  // by anything upstream of this task. applyConfig() already rewrites short_name/version/
+  // homepage_url/gecko.id on these same two files; this is the rest of that file's visible
+  // branding, kept here since it is specific to the browser overlay.
+  editJson("apps/browser/src/manifest.json", (j) => {
+    if (j.author !== "Bitwarden Inc.")
+      fail(`manifest.json: unexpected author ${JSON.stringify(j.author)}`);
+    j.author = "FSITES LTD";
+    if (j.browser_action?.default_title !== "Bitwarden")
+      fail(
+        `manifest.json: unexpected browser_action.default_title ${JSON.stringify(j.browser_action?.default_title)}`,
+      );
+    j.browser_action.default_title = "FastVault";
+    for (const k of ["__firefox__sidebar_action", "__opera__sidebar_action"]) {
+      if (j[k]?.default_title !== "Bitwarden")
+        fail(`manifest.json: unexpected ${k}.default_title ${JSON.stringify(j[k]?.default_title)}`);
+      j[k].default_title = "FastVault";
+    }
+  });
+  editJson("apps/browser/src/manifest.v3.json", (j) => {
+    if (j.author !== "Bitwarden Inc.")
+      fail(`manifest.v3.json: unexpected author ${JSON.stringify(j.author)}`);
+    j.author = "FSITES LTD";
+    if (j.action?.default_title !== "Bitwarden")
+      fail(
+        `manifest.v3.json: unexpected action.default_title ${JSON.stringify(j.action?.default_title)}`,
+      );
+    j.action.default_title = "FastVault";
+    for (const k of ["__firefox__sidebar_action", "__opera__sidebar_action"]) {
+      if (j[k]?.default_title !== "Bitwarden")
+        fail(
+          `manifest.v3.json: unexpected ${k}.default_title ${JSON.stringify(j[k]?.default_title)}`,
+        );
+      j[k].default_title = "FastVault";
+    }
+  });
+
+  // Dev-only stable Chrome id (never shipped to stores): FV_DEV=1 node fastvault/apply.mjs
+  // dev-chrome-key.txt is generated by Task 2 Step 1 and is not committed; fail with a clear
+  // message rather than an ENOENT stack trace when someone sets FV_DEV=1 before that exists.
+  if (process.env.FV_DEV === "1") {
+    const keyFile = join(FV, "dev-chrome-key.txt");
+    if (!existsSync(keyFile))
+      fail(
+        `FV_DEV=1 is set but ${rel(keyFile)} does not exist — generate it first (see Task 2 Step 1), or run without FV_DEV=1.`,
+      );
+    const key = readFileSync(keyFile, "utf8").trim(); // base64 public key, see Task 2 Step 1
+    for (const m of ["apps/browser/src/manifest.json", "apps/browser/src/manifest.v3.json"])
+      editJson(m, (j) => {
+        j.key = key;
+      });
+  }
 }
 
 // ---------- 5. verify ----------
@@ -1109,6 +1242,7 @@ if (resolve(process.argv[1] ?? "") === resolve(fileURLToPath(import.meta.url))) 
   applyStrings();
   applyConfig();
   applyCode();
+  applyBrowser();
   verify();
   log(DRY ? "dry run complete" : `applied FastVault ${VERSION} overlay`);
 }

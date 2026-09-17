@@ -3,5 +3,9 @@
   "getBrowserExtension",
   "helpAndFeedback",
   "fileBugReport",
-  "authenticatorAppDescV2"
+  "authenticatorAppDescV2",
+  "extName",
+  "extDesc",
+  "helpCenter",
+  "aboutBitwarden"
 ]

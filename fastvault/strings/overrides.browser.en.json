@@ -1,5 +1,12 @@
 {
+  "extName": { "message": "FastVault Password Manager" },
+  "extDesc": {
+    "message": "Your passwords, passkeys and notes, encrypted on your device. FastVault stores the locked box, never the key."
+  },
+  "appName": { "message": "FastVault" },
   "fastvaultAttribution": {
     "message": "FastVault is based on the open-source Bitwarden® clients (GPL-3.0). Bitwarden is a trademark of Bitwarden, Inc., which is not affiliated with FastVault."
-  }
+  },
+  "helpCenter": { "message": "Help and support" },
+  "aboutBitwarden": { "message": "About FastVault" }
 }
