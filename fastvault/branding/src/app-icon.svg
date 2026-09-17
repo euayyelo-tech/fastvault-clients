@@ -1,13 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="FastVault app icon">
-  <title>FastVault app icon</title>
-  <rect width="512" height="512" rx="112" fill="#08201C"></rect>
-  <g transform="translate(73.8 49.75) scale(3.4375)">
-    <circle cx="58" cy="60" r="3.6" fill="#F1F5F1"></circle>
-    <path d="M63.74 51.81 A10 10 0 1 0 63.74 68.19" fill="none" stroke="#F1F5F1" stroke-width="7" stroke-linecap="round"></path>
-    <path d="M68.33 45.26 A18 18 0 1 0 68.33 74.74" fill="none" stroke="#2BBE8B" stroke-width="7" stroke-linecap="round"></path>
-    <path d="M72.92 38.71 A26 26 0 1 0 72.92 81.29" fill="none" stroke="#F1F5F1" stroke-width="7" stroke-linecap="round"></path>
-    <path d="M77.52 32.15 A34 34 0 1 0 77.52 87.85" fill="none" stroke="#2BBE8B" stroke-width="7" stroke-linecap="round"></path>
-    <path d="M82.11 25.6 A42 42 0 1 0 82.11 94.4" fill="none" stroke="#F1F5F1" stroke-width="7" stroke-linecap="round"></path>
-    <rect x="88" y="14" width="6" height="92" rx="3" fill="#F1F5F1"></rect>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="FastVault"><title>FastVault</title>
+<defs><linearGradient id="t-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#173F35"/><stop offset="1" stop-color="#08201C"/></linearGradient><radialGradient id="t-light" cx=".22" cy=".12" r=".75"><stop offset="0" stop-color="#2BBE8B" stop-opacity=".38"/><stop offset="1" stop-color="#2BBE8B" stop-opacity="0"/></radialGradient><linearGradient id="m-mint" gradientUnits="userSpaceOnUse" x1="16" y1="16" x2="92" y2="104"><stop offset="0" stop-color="#8CF0CB"/><stop offset="1" stop-color="#2BBE8B"/></linearGradient></defs>
+<rect width="128" height="128" rx="28" fill="url(#t-bg)"/><rect width="128" height="128" rx="28" fill="url(#t-light)"/><rect x=".75" y=".75" width="126.5" height="126.5" rx="27.5" fill="none" stroke="#fff" stroke-opacity=".09"/>
+<g transform="translate(15.3 9) scale(0.917)"><g><path d="M63.74 51.81A10 10 0 1 0 63.74 68.19" fill="none" stroke="#F1F5F1" stroke-width="7" stroke-linecap="round"/><path d="M68.32 45.25A18 18 0 1 0 68.32 74.75" fill="none" stroke="url(#m-mint)" stroke-width="7" stroke-linecap="round"/><path d="M72.91 38.70A26 26 0 1 0 72.91 81.30" fill="none" stroke="#F1F5F1" stroke-width="7" stroke-linecap="round"/><path d="M77.50 32.15A34 34 0 1 0 77.50 87.85" fill="none" stroke="url(#m-mint)" stroke-width="7" stroke-linecap="round"/><path d="M82.09 25.59A42 42 0 1 0 82.09 94.41" fill="none" stroke="#F1F5F1" stroke-width="7" stroke-linecap="round"/><circle cx="58" cy="60" r="4.2" fill="#74E6BE"/><rect x="88" y="14" width="6" height="92" rx="3" fill="#F1F5F1"/></g></g></svg>

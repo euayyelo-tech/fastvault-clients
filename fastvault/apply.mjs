@@ -534,6 +534,44 @@ function applyCode() {
   // Native messaging bridge (host name + allow-lists)
   const nm = "apps/desktop/src/main/native-messaging.main.ts";
   replaceRegexMin(nm, /com\.8bit\.bitwarden/g, "app.fastvault.desktop", 10);
+
+  // IPC pipe/socket name. Upstream's "bw" becomes \\.\pipe\<sha256(home)>.s.bw on Windows —
+  // the SAME name the official Bitwarden desktop app listens on. Side by side, the official
+  // extension's proxy could reach our app (or ours theirs). "fastvault" makes the two apps
+  // invisible to each other. The Rust proxy (the native-messaging host the browser launches)
+  // must open the same name, so both sides change together; the Windows CI job compiles the
+  // Rust side, which is the only place this is verified.
+  replaceExact(nm, `ipc.NativeIpcServer.listen("bw", `, `ipc.NativeIpcServer.listen("fastvault", `);
+  const proxy = "apps/desktop/desktop_native/proxy/src/main.rs";
+  replaceExact(
+    proxy,
+    `desktop_core::ipc::all_paths("bw");`,
+    `desktop_core::ipc::all_paths("fastvault");`,
+  );
+  replaceExact(
+    proxy,
+    `path.set_extension("bitwarden.log");`,
+    `path.set_extension("fastvault.log");`,
+  );
+  replaceExact(
+    proxy,
+    `info!("Starting Bitwarden IPC Proxy.");`,
+    `info!("Starting FastVault IPC Proxy.");`,
+  );
+  replaceExact(proxy, `/// Bitwarden IPC Proxy.`, `/// FastVault IPC Proxy.`);
+  replaceExact(
+    proxy,
+    `NativeMessagingHosts/com.8bit.bitwarden.json`,
+    `NativeMessagingHosts/app.fastvault.desktop.json`,
+  );
+  // Linux (and unsandboxed macOS): the socket lives under the cache dir named after the app id.
+  // The macOS *sandboxed* branch keeps Bitwarden's App Group container id — it is bound to
+  // their Apple team id and macOS is out of scope (spec §11).
+  replaceExact(
+    "apps/desktop/desktop_native/core/src/ipc/mod.rs",
+    `let path_dir = home.join("com.bitwarden.desktop");`,
+    `let path_dir = home.join("app.fastvault.desktop");`,
+  );
   replaceExact(
     nm,
     `description: "Bitwarden desktop <-> browser bridge",`,
@@ -1032,12 +1070,28 @@ function verify() {
       // bare fail() so a developer sees this alongside every other residual-brand finding in one
       // run, the same pattern every other check in verify() follows.
       if (!content.includes(LINUX_WRAPPER_JIRA_COMMENT))
-        problems.push(`${f}: expected Jira-comment line not found — update LINUX_WRAPPER_JIRA_COMMENT`);
+        problems.push(
+          `${f}: expected Jira-comment line not found — update LINUX_WRAPPER_JIRA_COMMENT`,
+        );
       else content = content.replace(LINUX_WRAPPER_JIRA_COMMENT, "");
     }
     const re = f.endsWith("after-pack.js") ? /bitwarden-app/i : /bitwarden/i;
     if (re.test(content)) problems.push(`${f}: still mentions bitwarden`);
   }
+  // The IPC name must be the same on both sides, or the browser's proxy can never find the app:
+  // the desktop app listens on it (TS), the proxy connects to it (Rust). Checked here rather than
+  // trusted, because the two anchors live in two languages and either could drift on a rebase.
+  const IPC_NAME = `"fastvault"`;
+  if (
+    !read("apps/desktop/src/main/native-messaging.main.ts").includes(
+      `NativeIpcServer.listen(${IPC_NAME}, `,
+    )
+  )
+    problems.push(`native-messaging.main.ts: desktop app does not listen on ${IPC_NAME}`);
+  const proxySrc = read("apps/desktop/desktop_native/proxy/src/main.rs");
+  if (!proxySrc.includes(`all_paths(${IPC_NAME})`))
+    problems.push(`proxy/src/main.rs: proxy does not connect to ${IPC_NAME}`);
+  if (/bitwarden/i.test(proxySrc)) problems.push(`proxy/src/main.rs: still mentions bitwarden`);
   if (problems.length) {
     for (const p of problems) console.error("  -", p);
     fail(`${problems.length} residual brand reference(s)`);
