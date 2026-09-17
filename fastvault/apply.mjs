@@ -980,8 +980,10 @@ function applyBrowser() {
   const ours = readFileSync(join(FV, "branding/inline-menu-icons.ts"), "utf8").trim();
   const s = read(icons);
   const re =
-    /export const logoIcon =\n\s+'<svg[^\n]*';\n\nexport const logoLockedIcon =\n\s+'<svg[^\n]*';/;
-  if (!re.test(s)) fail(`${icons}: logoIcon/logoLockedIcon block not found`);
+    /export const logoIcon =\n\s+'<svg[^\n]*';\n\nexport const logoLockedIcon =\n\s+'<svg[^\n]*';/g;
+  const iconMatches = s.match(re)?.length ?? 0;
+  if (iconMatches !== 1)
+    fail(`${icons}: expected 1 logoIcon/logoLockedIcon block, found ${iconMatches}`);
   write(icons, s.replace(re, ours));
   log(`${icons}: inline-menu logos replaced`);
 
@@ -1264,6 +1266,28 @@ function verify() {
   if (!proxySrc.includes(`all_paths(${IPC_NAME})`))
     problems.push(`proxy/src/main.rs: proxy does not connect to ${IPC_NAME}`);
   if (/bitwarden/i.test(proxySrc)) problems.push(`proxy/src/main.rs: still mentions bitwarden`);
+  // Backstop for the two browser-extension file kinds the .ts/.html walk above cannot see:
+  // popup/index.ejs (an .ejs template) and the two manifest .json files. Task 1's fix rounds found
+  // real "Bitwarden" leaks in exactly these files, invisible to REWRITE_ROOTS' `/\.(ts|html)$/`
+  // filter — this makes a future regression here fail loudly instead of shipping silently.
+  if (read("apps/browser/src/popup/index.ejs").includes("Bitwarden"))
+    problems.push(`apps/browser/src/popup/index.ejs: still mentions Bitwarden`);
+  for (const [m, actionKey] of [
+    ["apps/browser/src/manifest.json", "browser_action"],
+    ["apps/browser/src/manifest.v3.json", "action"],
+  ]) {
+    const j = JSON.parse(read(m));
+    for (const k of ["name", "short_name", "author", "description"])
+      if (typeof j[k] === "string" && j[k].includes("Bitwarden"))
+        problems.push(`${m}: ${k} still says Bitwarden (${JSON.stringify(j[k])})`);
+    if (
+      typeof j[actionKey]?.default_title === "string" &&
+      j[actionKey].default_title.includes("Bitwarden")
+    )
+      problems.push(
+        `${m}: ${actionKey}.default_title still says Bitwarden (${JSON.stringify(j[actionKey].default_title)})`,
+      );
+  }
   if (problems.length) {
     for (const p of problems) console.error("  -", p);
     fail(`${problems.length} residual brand reference(s)`);
