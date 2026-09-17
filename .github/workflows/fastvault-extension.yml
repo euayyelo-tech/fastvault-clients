@@ -1,0 +1,99 @@
+name: FastVault browser extension
+on:
+  push:
+    branches: [fastvault]
+    tags: ["fastvault-extension-v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --max_old_space_size=8192
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: "**/package-lock.json" }
+      # Same gate as the desktop workflow: the tag names the version the manifests carry
+      # (apply.mjs stamps fastvault/version.txt into both manifests), so a mismatch would publish
+      # a release whose name disagrees with the package inside it.
+      - name: Check tag matches fastvault/version.txt
+        if: startsWith(github.ref, 'refs/tags/fastvault-extension-v')
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#fastvault-extension-v}"
+          file_version="$(tr -d '[:space:]' < fastvault/version.txt)"
+          echo "tag=$tag_version version.txt=$file_version"
+          if [ "$tag_version" != "$file_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME says $tag_version but fastvault/version.txt says $file_version"
+            exit 1
+          fi
+      # --ignore-scripts: the root postinstall rebuilds the desktop app's native modules, which
+      # the browser build never loads and which needs a Rust toolchain this job does not have.
+      - run: npm ci --ignore-scripts
+      # Never FV_DEV=1 here: that mode bakes the dev public key into the manifest, which gives a
+      # local unpacked build a stable id and must never reach a store package.
+      - run: node fastvault/apply.mjs
+      - name: Assert no dev key in the manifests
+        shell: bash
+        run: |
+          if grep -q '"key"' apps/browser/src/manifest.json apps/browser/src/manifest.v3.json; then
+            echo "::error::a manifest carries a \"key\" field - store builds must not"
+            exit 1
+          fi
+      - run: npm run dist:chrome
+        working-directory: apps/browser
+      - run: node fastvault/verify-build.mjs apps/browser/build
+      - run: npm run dist:edge
+        working-directory: apps/browser
+      - run: node fastvault/verify-build.mjs apps/browser/build
+      - run: npm run dist:firefox
+        working-directory: apps/browser
+      - run: node fastvault/verify-build.mjs apps/browser/build
+      - run: ls -la apps/browser/dist
+      - uses: actions/upload-artifact@v4
+        with: { name: fastvault-extension, path: apps/browser/dist/*.zip, if-no-files-found: error }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/fastvault-extension-v')
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: fastvault-extension, path: dist }
+      - name: Compose release body
+        shell: bash
+        run: |
+          {
+            echo "RELEASE_BODY<<EOF"
+            echo "Store packages for Chrome (dist-chrome.zip), Edge (dist-edge.zip) and Firefox (dist-firefox.zip). Based on bitwarden/clients $(tr -d '[:space:]' < fastvault/UPSTREAM) (see fastvault/UPSTREAM). These are the files uploaded to the stores; they are not installable by hand except as an unpacked developer build."
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+      - name: Assert all expected release assets are present
+        shell: bash
+        run: |
+          for f in dist-chrome.zip dist-edge.zip dist-firefox.zip; do
+            [ -f "dist/$f" ] || { echo "::error::missing $f"; exit 1; }
+          done
+          # A store zip must carry no dev key and must name the version the tag says.
+          version="${GITHUB_REF_NAME#fastvault-extension-v}"
+          for f in dist-chrome.zip dist-edge.zip dist-firefox.zip; do
+            unzip -p "dist/$f" manifest.json > "/tmp/$f.manifest.json"
+            grep -q '"key"' "/tmp/$f.manifest.json" && { echo "::error::$f carries a key field"; exit 1; }
+            grep -q "\"version\": \"$version\"" "/tmp/$f.manifest.json" || { echo "::error::$f is not version $version"; exit 1; }
+            grep -q '"short_name": "FastVault"' "/tmp/$f.manifest.json" || { echo "::error::$f short_name is not FastVault"; exit 1; }
+          done
+      # Pinned to a commit SHA for the same reason as the desktop workflow.
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (v2.6.2)
+        with:
+          name: FastVault browser extension ${{ github.ref_name }}
+          body: ${{ env.RELEASE_BODY }}
+          files: dist/*.zip
+          fail_on_unmatched_files: true

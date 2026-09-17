@@ -909,6 +909,15 @@ function applyCode() {
     log(`link rule ${re} fired ${fired[i]}x`);
   });
 
+  // The preflight wrapper's doc comment survives CSS minification into the browser popup's
+  // main.css (a /** */ block the minifier keeps). Never rendered, but verify-build.mjs treats
+  // every non-.js occurrence as user-reachable on purpose — so rename it at source.
+  replaceExact(
+    "libs/components/src/tw-theme-preflight.css",
+    ` * Bitwarden Tailwind configuration to use with preflight enabled`,
+    ` * FastVault Tailwind configuration to use with preflight enabled`,
+  );
+
   // Theme (spec §4.6) — brand scale once, primary/background per theme block
   const css = "libs/components/src/tw-theme.css";
   const brand = {

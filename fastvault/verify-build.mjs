@@ -63,8 +63,9 @@ const relative = (p) => p.slice(BUILD.length + 1).replace(/\\/g, "/");
 
 // --- locale string tables -------------------------------------------------
 function checkLocales() {
-  const dir = join(BUILD, "locales");
-  if (!existsSync(dir)) return fail("no locales/ directory in the build output");
+  // Desktop ships locales/, the browser extension _locales/ (WebExtension layout) — same table shape.
+  const dir = ["locales", "_locales"].map((d) => join(BUILD, d)).find((d) => existsSync(d));
+  if (!dir) return fail("no locales/ or _locales/ directory in the build output");
   let langs = 0,
     keys = 0;
   for (const lang of readdirSync(dir)) {
@@ -75,7 +76,9 @@ function checkLocales() {
     for (const [k, v] of Object.entries(j)) {
       keys++;
       if (typeof v?.message === "string" && v.message.includes(BRAND) && !ALLOWED_BRAND_KEYS.has(k))
-        problems.push(`locales/${lang}/messages.json: ${k} = ${JSON.stringify(v.message)}`);
+        problems.push(
+          `${dir.endsWith("_locales") ? "_locales" : "locales"}/${lang}/messages.json: ${k} = ${JSON.stringify(v.message)}`,
+        );
     }
   }
   if (langs < 50) problems.push(`locales/: only ${langs} languages found — did the layout change?`);
@@ -107,7 +110,7 @@ function checkFiles() {
     occurrences = 0;
   for (const p of walk(BUILD)) {
     const r = relative(p);
-    if (r.startsWith("locales/")) continue; // handled above
+    if (r.startsWith("locales/") || r.startsWith("_locales/")) continue; // handled above
     if (/\.(map|wasm|png|ico|jpg|jpeg|gif|svg|woff2?|ttf|eot|node|exe|dll)$/i.test(r)) continue;
     if (statSync(p).size > 64 * 1024 * 1024) {
       problems.push(`${r}: too large to scan`);
