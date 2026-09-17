@@ -1,4 +1,4 @@
-name: FastVault desktop (Windows)
+name: FastVault desktop
 on:
   push:
     branches: [fastvault]
@@ -78,21 +78,88 @@ jobs:
             apps/desktop/dist/FastVault-*.exe
             apps/desktop/dist/*.blockmap
             apps/desktop/dist/latest.yml
-      - name: Compose release body
+
+  linux:
+    # ubuntu-22.04 on purpose: upstream keeps its Linux job on the oldest supported runner so the
+    # produced binaries link against the oldest glibc (widest compatibility). Do not bump casually.
+    runs-on: ubuntu-22.04
+    env:
+      NODE_OPTIONS: --max_old_space_size=4096
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: "**/package-lock.json" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (v2.9.2)
+        with: { workspaces: "apps/desktop/desktop_native -> target" }
+      - name: Check tag matches fastvault/version.txt
         if: startsWith(github.ref, 'refs/tags/fastvault-desktop-v')
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#fastvault-desktop-v}"
+          file_version="$(tr -d '[:space:]' < fastvault/version.txt)"
+          echo "tag=$tag_version version.txt=$file_version"
+          if [ "$tag_version" != "$file_version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME says $tag_version but fastvault/version.txt says $file_version"
+            exit 1
+          fi
+      # Same packages upstream's Linux job installs, minus snapcraft/flatpak (targets we don't build).
+      # `rpm` is what electron-builder's fpm needs for the .rpm target.
+      - run: sudo apt-get update && sudo apt-get -y install pkg-config libxss-dev rpm
+      - run: rustup show
+        working-directory: apps/desktop/desktop_native
+      - run: npm ci
+      - run: node fastvault/apply.mjs
+      # Explicit target + static pkg-config, exactly as upstream builds Linux (desktop_proxy,
+      # libprocess_isolation.so and the napi module all come out of this one command).
+      - run: node build.js --target=x86_64-unknown-linux-gnu --release
+        working-directory: apps/desktop/desktop_native
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "true"
+          PKG_CONFIG_ALL_STATIC: "true"
+      - run: npm run build
+        working-directory: apps/desktop
+      - run: node fastvault/verify-build.mjs
+      - run: npx electron-builder --linux deb rpm AppImage --x64 -p never
+        working-directory: apps/desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastvault-desktop-linux
+          path: |
+            apps/desktop/dist/FastVault-*.deb
+            apps/desktop/dist/FastVault-*.rpm
+            apps/desktop/dist/FastVault-*.AppImage
+            apps/desktop/dist/latest-linux.yml
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/fastvault-desktop-v')
+    needs: [windows, linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: fastvault-desktop-windows, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: fastvault-desktop-linux, path: dist }
+      - name: Compose release body
         shell: bash
         run: |
           {
             echo "RELEASE_BODY<<EOF"
-            echo "Windows x64. Based on bitwarden/clients $(tr -d '[:space:]' < fastvault/UPSTREAM) (see fastvault/UPSTREAM). Unsigned until code signing is configured."
+            echo "Windows x64 (installer + portable) and Linux x64 (.deb, .rpm, .AppImage). Based on bitwarden/clients $(tr -d '[:space:]' < fastvault/UPSTREAM) (see fastvault/UPSTREAM). Unsigned until code signing is configured. On Linux only the AppImage auto-updates; .deb/.rpm update through your package manager."
             echo "EOF"
           } >> "$GITHUB_ENV"
-      - if: startsWith(github.ref, 'refs/tags/fastvault-desktop-v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (v2.6.2)
+      - run: ls -la dist
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (v2.6.2)
         with:
           name: FastVault Desktop ${{ github.ref_name }}
           body: ${{ env.RELEASE_BODY }}
+          fail_on_unmatched_files: true
           files: |
-            apps/desktop/dist/FastVault-*.exe
-            apps/desktop/dist/*.blockmap
-            apps/desktop/dist/latest.yml
+            dist/FastVault-*.exe
+            dist/*.blockmap
+            dist/latest.yml
+            dist/FastVault-*.deb
+            dist/FastVault-*.rpm
+            dist/FastVault-*.AppImage
+            dist/latest-linux.yml
