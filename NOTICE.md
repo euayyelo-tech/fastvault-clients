@@ -19,11 +19,16 @@ time by `fastvault/apply.mjs`:
 - **Strings:** "Bitwarden" is replaced with "FastVault" in every message
   value of every locale file of both apps. Compound names such as
   "Bitwarden Send" and "Bitwarden Authenticator" are covered by that same
-  sweep and need no special handling. A small set of _keys_ is then
-  overridden outright, where a straight word swap would say something
-  untrue — the mobile-apps menu entry (which points at the official
-  Bitwarden apps), the help/feedback and bug-report labels, and a new
-  attribution string shown in the About screen.
+  sweep and need no special handling. The lowercase domain reference
+  "bitwarden.com" is a separate substitution, also applied to every
+  message value of every locale file: it becomes "fastvault.app" except
+  in the self-hosted base-URL hint, where the whole illustrative example
+  is swapped for a brand-neutral one instead of a literal domain swap. A
+  small set of _keys_ is then overridden outright, where a straight word
+  swap would say something untrue — the mobile-apps menu entry (which
+  points at the official Bitwarden apps), the help/feedback and
+  bug-report labels, and a new attribution string shown in the About
+  screen.
 - **Server default:** the built-in region list is replaced with a single
   FastVault-hosted region (`vault.fastvault.app`) in place of Bitwarden's
   US/EU/Gov entries; the "Self-hosted" option is unaffected.

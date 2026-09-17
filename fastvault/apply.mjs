@@ -186,6 +186,14 @@ const LOCALE_DIRS = [
   { app: "desktop", dir: "apps/desktop/src/locales" },
   { app: "browser", dir: "apps/browser/src/_locales" },
 ];
+// Illustrative self-hosted-server URL example ("Specify the base URL of your on-premises hosted
+// Bitwarden installation. Example: https://bitwarden.company.com") — not a mention of Bitwarden's
+// own cloud, the word is filler for a hypothetical subdomain. Matched by shape (bitwarden.<word>.com)
+// rather than the literal English "company", because some locales translate the filler word
+// ("company" -> French "compagnie", Galician "compañia") and both still start with "com" — so a
+// plain "bitwarden.com" substring replace would fire mid-word there and corrupt the host into a
+// garbled "fastvault.app<remainder>" domain instead of leaving a clean example.
+const SELF_HOSTED_URL_RE = /https:\/\/bitwarden\.[^\s<]+\.com/g;
 function applyStrings() {
   const drop = JSON.parse(readFileSync(join(FV, "strings/drop-from-other-locales.json"), "utf8"));
   for (const { app, dir } of LOCALE_DIRS) {
@@ -193,15 +201,30 @@ function applyStrings() {
       readFileSync(join(FV, `strings/overrides.${app}.en.json`), "utf8"),
     );
     let files = 0,
-      hits = 0;
+      hits = 0,
+      domainHits = 0;
     for (const loc of readdirSync(join(ROOT, dir))) {
       const file = `${dir}/${loc}/messages.json`;
       if (!existsSync(join(ROOT, file))) continue;
       const j = JSON.parse(read(file));
       for (const [k, v] of Object.entries(j)) {
-        if (v && typeof v.message === "string" && v.message.includes("Bitwarden")) {
+        if (!(v && typeof v.message === "string")) continue;
+        if (v.message.includes("Bitwarden")) {
           v.message = v.message.split("Bitwarden").join("FastVault");
           hits++;
+        }
+        // Lowercase "bitwarden.com" surviving in prose — a DOMAIN reference, separate from the
+        // brand-NAME rename above (until 2026.7.3 nothing renamed this: e.g. "...set up on the
+        // bitwarden.com web vault.", "user@bitwarden.com, user@acme.com").
+        if (k === "selfHostedBaseUrlHint") {
+          const n = (v.message.match(SELF_HOSTED_URL_RE) || []).length;
+          if (n) {
+            v.message = v.message.replace(SELF_HOSTED_URL_RE, "https://vault.company.com");
+            domainHits += n;
+          }
+        } else if (v.message.includes("bitwarden.com")) {
+          v.message = v.message.split("bitwarden.com").join("fastvault.app");
+          domainHits++;
         }
       }
       if (loc === "en") {
@@ -214,7 +237,7 @@ function applyStrings() {
     }
     if (files < 50) fail(`${dir}: only ${files} locale files — did the layout change?`);
     log(
-      `${app}: ${files} locale files, ${hits} brand mentions renamed, ${Object.keys(overrides).length} overrides`,
+      `${app}: ${files} locale files, ${hits} brand mentions renamed, ${domainHits} domain mentions renamed, ${Object.keys(overrides).length} overrides`,
     );
   }
   // Store listing texts (plan B uses them; renaming now is harmless and keeps one rule).
@@ -224,17 +247,29 @@ function applyStrings() {
   // the strings are already FastVault's, but 0 .resx files found means the layout moved.
   const storeDir = "apps/browser/store/locales";
   let seen = 0,
-    n = 0;
+    n = 0,
+    domainN = 0;
   for (const f of walk(storeDir, (p) => p.endsWith(".resx"))) {
     seen++;
-    const s = read(f);
+    let s = read(f);
+    let changed = false;
     if (s.includes("Bitwarden")) {
-      write(f, s.split("Bitwarden").join("FastVault"));
+      s = s.split("Bitwarden").join("FastVault");
       n++;
+      changed = true;
     }
+    // Same lowercase-domain gap as the messages.json sweep above — found live in the Estonian and
+    // Portuguese (Brazil) store descriptions ("...Külasta veebilehte bitwarden.com..." / "...Visite
+    // bitwarden.com...").
+    if (s.includes("bitwarden.com")) {
+      s = s.split("bitwarden.com").join("fastvault.app");
+      domainN++;
+      changed = true;
+    }
+    if (changed) write(f, s);
   }
   if (seen === 0) fail(`${storeDir}: no .resx files found — did the store-locale layout change?`);
-  log(`store locales: ${seen} .resx files, ${n} renamed`);
+  log(`store locales: ${seen} .resx files, ${n} brand renames, ${domainN} domain renames`);
 }
 
 // ---------- 3. config (JSON) ----------
@@ -849,9 +884,15 @@ function verify() {
   const problems = [];
   for (const { dir } of LOCALE_DIRS) {
     const j = JSON.parse(read(`${dir}/en/messages.json`));
-    for (const [k, v] of Object.entries(j))
+    for (const [k, v] of Object.entries(j)) {
       if (v?.message?.includes("Bitwarden") && !ALLOWED_BRAND_KEYS.has(k))
         problems.push(`${dir}/en: key ${k} still says Bitwarden`);
+      // Same residual check for the lowercase domain reference applyStrings() now also renames
+      // (e.g. "...set up on the bitwarden.com web vault.") — a different substitution than the
+      // brand-name rename above, so it needs its own leftover check.
+      if (v?.message?.includes("bitwarden.com"))
+        problems.push(`${dir}/en: key ${k} still says bitwarden.com`);
+    }
   }
   // One scan over exactly the files applyCode()'s sweep rewrote — same roots, same exclusions.
   let scanned = 0;
