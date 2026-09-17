@@ -998,29 +998,36 @@ function verify() {
       }
     }
   // Linux packaging files live outside REWRITE_ROOTS; check the four the overlay rewrites explicitly.
-  // Two of the four are narrowed to /bitwarden-app/ instead of the general /bitwarden/i, because each
-  // carries an inert internal engineering reference this task does not rename:
-  //  - after-pack.js's darwin-only signing branch names Bitwarden's own Apple codesigning identities
-  //    ("Developer ID Application: Bitwarden Inc", "3rd Party Mac Developer Application: Bitwarden
-  //    Inc") plus a comment referencing them — real Apple-registered certificate common names, out of
-  //    scope (FastVault has no Bitwarden Inc certificate to sign with regardless).
-  //  - linux-wrapper.sh has one comment linking Bitwarden's own private Jira ("The follow-up task is
-  //    https://bitwarden.atlassian.net/browse/PM-31080.") documenting an Electron/Wayland upstream
-  //    bug workaround — an internal tracking link, not user-facing text, and not FastVault's ticket
-  //    to rewrite to.
-  // The other two (.desktop, .policy) are small, fully-covered by the replaceExact calls above, and
-  // checked with the general pattern so any future stray mention there still fails loudly.
+  // after-pack.js is narrowed to /bitwarden-app/ instead of the general /bitwarden/i: its darwin-only
+  // signing branch names Bitwarden's own Apple codesigning identities ("Developer ID Application:
+  // Bitwarden Inc", "3rd Party Mac Developer Application: Bitwarden Inc") plus a comment referencing
+  // them — real Apple-registered certificate common names, out of scope (FastVault has no Bitwarden
+  // Inc certificate to sign with regardless).
+  // linux-wrapper.sh keeps the general /bitwarden/i check, but with one specific KNOWN LINE stripped
+  // first — not the whole file narrowed to /bitwarden-app/ the way after-pack.js is. That line is an
+  // inert comment linking Bitwarden's own private Jira (an Electron/Wayland upstream-bug tracking
+  // note), not user-facing text and not FastVault's ticket to rewrite. Narrowing by exact line (like
+  // EXCLUDED_FILES/ALLOWED_HTML_TEXT_FILES narrow by whole file, one level finer) means any OTHER
+  // "bitwarden" mention added to this file later — a new comment, a new string, anything unrelated to
+  // this one Jira URL — still trips the check; a whole-file exemption would have silently missed it.
+  const LINUX_WRAPPER_JIRA_COMMENT =
+    "  # fixed. The follow-up task is https://bitwarden.atlassian.net/browse/PM-31080.";
   for (const f of [
     "apps/desktop/scripts/after-pack.js",
     "apps/desktop/resources/linux-wrapper.sh",
     "apps/desktop/resources/com.bitwarden.desktop.desktop",
     "apps/desktop/resources/com.bitwarden.desktop.policy",
   ]) {
-    const re =
-      f.endsWith("after-pack.js") || f.endsWith("linux-wrapper.sh")
-        ? /bitwarden-app/i
-        : /bitwarden/i;
-    if (re.test(read(f))) problems.push(`${f}: still mentions bitwarden`);
+    let content = read(f);
+    if (f.endsWith("linux-wrapper.sh")) {
+      // Anchored like every other rule in this file: if upstream ever changes or removes this exact
+      // comment, fail loudly instead of leaving a stale, silently-inert exception in place.
+      if (!content.includes(LINUX_WRAPPER_JIRA_COMMENT))
+        fail(`${f}: expected Jira-comment line not found — update LINUX_WRAPPER_JIRA_COMMENT`);
+      content = content.replace(LINUX_WRAPPER_JIRA_COMMENT, "");
+    }
+    const re = f.endsWith("after-pack.js") ? /bitwarden-app/i : /bitwarden/i;
+    if (re.test(content)) problems.push(`${f}: still mentions bitwarden`);
   }
   if (problems.length) {
     for (const p of problems) console.error("  -", p);
