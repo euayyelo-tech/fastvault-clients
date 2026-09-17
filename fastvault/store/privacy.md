@@ -8,9 +8,13 @@ Policy: https://fastvault.app/legal/privacy
 Only the FastVault server the account is signed in to — `vault.fastvault.app`
 by default, or a self-hosted server the user configures — and, if the user
 turns on "Unlock with biometrics", the FastVault desktop app on the same
-computer through the browser's native-messaging bridge. Nothing else. No
-analytics, no crash reporting, no advertising, no third-party SDKs that phone
-home.
+computer through the browser's native-messaging bridge. Nothing else. One
+exception, only when you run the exposed-password check on an item: the
+extension asks haveibeenpwned.com's Pwned Passwords API
+(api.pwnedpasswords.com) using the first five characters of the password's
+hash, so the password itself is never sent. This is disclosed in the privacy
+policy. No analytics, no crash reporting, no advertising, no third-party SDKs
+that phone home.
 
 ## Why it asks for access to all sites
 
@@ -53,4 +57,5 @@ is read only for that; nothing about the pages is stored or sent.
   `fastvault`; the extension is built from a clean `bitwarden/clients`
   checkout plus the `fastvault/` overlay — see `fastvault/README.md` for the
   exact build steps a reviewer can reproduce).
-- Third-party services: FastVault's own server only.
+- Third-party services: FastVault's own server, and haveibeenpwned.com (Pwned
+  Passwords API, exposed-password check only).

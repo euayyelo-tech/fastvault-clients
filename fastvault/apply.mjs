@@ -119,14 +119,29 @@ function replaceBlock(file, start, end, replacement) {
 // removeElement: delete the nearest `open`..`close` block (default <bit-item>..</bit-item>) that
 // wraps the single line containing `anchor`. Walks up/down from that line rather than matching the
 // anchor's own block directly, since the anchor is inside the block, not the block's boundary.
+// Bounded on both sides: walking up, crossing a `close` line before an `open` line means the
+// anchor sits after some PRECEDING sibling's closing tag rather than inside its own — splicing
+// would eat that neighbour instead of (or as well as) the intended block. Walking down mirrors
+// this: crossing an `open` before the matching `close` means the block never closes before the
+// next one starts. Either case means the anchor is not actually inside an `open`/`close` pair, so
+// fail() loudly instead of silently splicing the wrong lines.
 function removeElement(file, anchor, open = "<bit-item>", close = "</bit-item>") {
   const lines = read(file).split("\n");
   const hits = lines.map((l, i) => (l.includes(anchor) ? i : -1)).filter((i) => i >= 0);
   if (hits.length !== 1) fail(`${file}: expected 1 line with ${anchor}, found ${hits.length}`);
-  let a = hits[0],
-    b = hits[0];
-  while (a >= 0 && lines[a].trim() !== open) a--;
-  while (b < lines.length && lines[b].trim() !== close) b++;
+  const start = hits[0];
+  let a = start;
+  while (a >= 0 && lines[a].trim() !== open) {
+    a--;
+    if (a >= 0 && lines[a].trim() === close)
+      fail(`${file}: ${anchor}: crossed ${close} while walking up to ${open} — not inside one`);
+  }
+  let b = start;
+  while (b < lines.length && lines[b].trim() !== close) {
+    b++;
+    if (b < lines.length && lines[b].trim() === open)
+      fail(`${file}: ${anchor}: crossed ${open} while walking down to ${close} — not inside one`);
+  }
   if (a < 0 || b >= lines.length) fail(`${file}: ${open}/${close} not found around ${anchor}`);
   lines.splice(a, b - a + 1);
   write(file, lines.join("\n"));
@@ -211,8 +226,17 @@ const LOCALE_DIRS = [
 // garbled "fastvault.app<remainder>" domain instead of leaving a clean example.
 const SELF_HOSTED_URL_RE = /https:\/\/bitwarden\.[^\s<]+\.com/g;
 function applyStrings() {
-  const drop = JSON.parse(readFileSync(join(FV, "strings/drop-from-other-locales.json"), "utf8"));
+  // Per-app: the two apps' locale sets overlap (e.g. "aboutBitwarden" is a real key in BOTH), so a
+  // single shared drop list silently deleted the desktop translation of any key added only for the
+  // browser override's sake — desktop lost "aboutBitwarden" in every non-English locale (falling
+  // back to the English text) the moment the browser override round added it for browser's own
+  // reasons. Each app now drops only the keys its own overrides.<app>.en.json actually rewrites.
+  const dropByApp = JSON.parse(
+    readFileSync(join(FV, "strings/drop-from-other-locales.json"), "utf8"),
+  );
   for (const { app, dir } of LOCALE_DIRS) {
+    const drop = dropByApp[app];
+    if (!Array.isArray(drop)) fail(`drop-from-other-locales.json: missing "${app}" array`);
     const overrides = JSON.parse(
       readFileSync(join(FV, `strings/overrides.${app}.en.json`), "utf8"),
     );
@@ -402,17 +426,31 @@ function applyConfig() {
       fail(`apps/desktop/src/package.json: unexpected repository ${JSON.stringify(j.repository)}`);
     j.repository.url = `git+https://github.com/${REPO}.git`;
   });
+  // AMO requires data_collection_permissions declared for new submissions (Firefox-only field,
+  // like gecko.id/strict_min_version already here) — consistent with fastvault/store/privacy.md:
+  // authenticationInfo (the user's own credentials) + personallyIdentifyingInfo (account email).
+  // NOTE: AMO's actual enum is "personallyIdentifyingInfo", not "personalInfo" — the latter (as
+  // originally specified) fails web-ext's schema validation with JSON_INVALID. Confirmed against
+  // addons-linter's own compiled schema (dist/addons-linter.js), the authority web-ext lints against.
+  const FIREFOX_DATA_COLLECTION = {
+    required: ["authenticationInfo", "personallyIdentifyingInfo"],
+    optional: [],
+  };
   editJson("apps/browser/src/manifest.json", (j) => {
     j.short_name = "FastVault";
     j.version = VERSION;
     j.homepage_url = SITE;
     j.__firefox__browser_specific_settings.gecko.id = FIREFOX_ID;
+    j.__firefox__browser_specific_settings.gecko.data_collection_permissions =
+      FIREFOX_DATA_COLLECTION;
   });
   editJson("apps/browser/src/manifest.v3.json", (j) => {
     j.short_name = "FastVault";
     j.version = VERSION;
     j.homepage_url = SITE;
     j.__firefox__browser_specific_settings.gecko.id = FIREFOX_ID;
+    j.__firefox__browser_specific_settings.gecko.data_collection_permissions =
+      FIREFOX_DATA_COLLECTION;
   });
 }
 
@@ -609,6 +647,23 @@ function applyCode() {
     `    const ids: Set<string> = new Set([`,
     `]);`,
     `    const ids: Set<string> = new Set([\n${CHROME_IDS.map((id) => `      "${id}",`).join("\n")}\n    ]);`,
+  );
+
+  // Passkey-provider IPC pipe — same class of collision as the "bw" rename just above, on a
+  // separate channel: Windows/Linux credential-provider autofill talks over a pipe named "af",
+  // the SAME name the official Bitwarden desktop app uses, so the two apps' autofill-provider
+  // processes could reach each other side by side. "fvaf" makes them invisible to each other, same
+  // reasoning as "fastvault" above. The Rust constant is the #[cfg(not(test))] one; the #[cfg(test)]
+  // "af-test" sibling is intentionally untouched (never opened by a real build).
+  replaceExact(
+    "apps/desktop/src/autofill/main/main-desktop-autofill.service.ts",
+    `AutofillIpcServer.listen(\n      "af",`,
+    `AutofillIpcServer.listen(\n      "fvaf",`,
+  );
+  replaceExact(
+    "apps/desktop/desktop_native/autofill_provider/src/lib.rs",
+    `static IPC_PATH: &str = "af";`,
+    `static IPC_PATH: &str = "fvaf";`,
   );
 
   // SSO localhost callback page (shown in the user's default browser after login completes)
@@ -972,6 +1027,34 @@ function applyBrowser() {
   for (const f of ["chrome-icon128.png", "icon64.png", "windows-icon300.png"])
     copy(`${G}/store/${f}`, `apps/browser/store/icons/${f}`);
 
+  // Bitwarden shield injected into every save/update-login notification bar — the one icon
+  // Task 1's applyBrowser() pass missed (the autofill toolbar/inline-menu icons were covered, this
+  // separate component wasn't). Copied like the desktop icons in applyAssets(): a plain TS source
+  // file with the exact same export name/signature/imports as upstream, drawing the FastVault mark
+  // instead. Confirmed unreferenced elsewhere: apps/browser/src/autofill/content/components/icons/
+  // brand-icon-container.ts is the only importer, and it just forwards `theme`/`color` through.
+  copy(
+    "branding/notification-shield.ts",
+    "apps/browser/src/autofill/content/components/icons/shield.ts",
+  );
+
+  // Safari-only touch icons: this fork builds Chrome/Edge/Firefox, never Safari (no
+  // build:safari/dist:safari target is ever run here), and nothing in apps/browser/src references
+  // these four filenames (confirmed by grep) — so they only ever shipped as unreferenced dead
+  // weight bearing the old Bitwarden mark inside the zips. remove() fails loudly if upstream ever
+  // moves one, which is the point: a silent skip here would ship the old mark again.
+  for (const f of [
+    "icon18_safari.png",
+    "icon18_safari@2x.png",
+    "icon18_safari_locked.png",
+    "icon18_safari_locked@2x.png",
+  ])
+    remove(`apps/browser/src/images/${f}`);
+  // download-qr.png / app-store.png / google-play.png were NOT removed here: they are still
+  // referenced by download-bitwarden.component.html, which fix round 1 deliberately left in place
+  // (only its route and menu entry were removed, per that round's scope) — see the report's item 4
+  // for the follow-up this implies.
+
   // Popup document <title> (webpack's HtmlWebpackPlugin renders this .ejs template into
   // popup/index.html). REWRITE_ROOTS' walk only visits .ts/.html, so this .ejs file — the only one
   // in scope — is invisible to both applyCode()'s generic title sweep and verify()'s residual scan;
@@ -993,7 +1076,14 @@ function applyBrowser() {
   const iconMatches = s.match(re)?.length ?? 0;
   if (iconMatches !== 1)
     fail(`${icons}: expected 1 logoIcon/logoLockedIcon block, found ${iconMatches}`);
-  write(icons, s.replace(re, ours));
+  // A function replacement, not the bare string: String#replace treats "$&", "$1", "$`" etc. in a
+  // STRING replacement as special patterns, and `ours` is untrusted-ish SVG markup that could
+  // contain a literal "$" for other reasons later. A callback returning `ours` verbatim never does
+  // that substitution.
+  write(
+    icons,
+    s.replace(re, () => ours),
+  );
   log(`${icons}: inline-menu logos replaced`);
 
   // About dialog + About page + settings trims
@@ -1049,6 +1139,16 @@ function applyBrowser() {
     "",
   );
 
+  // Intro carousel "Create account": FastVault Server refuses sign-ups (there is no self-serve
+  // account creation), so the in-popup /signup route is a dead end. Open the pricing page in a new
+  // tab instead of navigating the popup there. this.introCarouselService.setIntroCarouselDismissed()
+  // just above this line is untouched — the carousel still dismisses itself either way.
+  replaceExact(
+    "apps/browser/src/vault/popup/components/vault/intro-carousel/intro-carousel.component.ts",
+    `await this.router.navigate(["/signup"]);`,
+    `window.open(\`${SITE}/pricing\`, "_blank", "noopener");`,
+  );
+
   // Desktop bridge host name (2 call sites)
   for (const f of [
     "apps/browser/src/background/nativeMessaging.background.ts",
@@ -1100,8 +1200,10 @@ function applyBrowser() {
   });
 
   // Dev-only stable Chrome id (never shipped to stores): FV_DEV=1 node fastvault/apply.mjs
-  // dev-chrome-key.txt is generated by Task 2 Step 1 and is not committed; fail with a clear
-  // message rather than an ENOENT stack trace when someone sets FV_DEV=1 before that exists.
+  // dev-chrome-key.txt IS committed — it's the PUBLIC half of the keypair (the base64 public key
+  // itself, safe to publish; the private half never leaves whoever generated it and is not in this
+  // repo). Still guarded with existsSync: a shallow checkout, a stripped archive, or someone
+  // deleting the file locally would otherwise hit an ENOENT stack trace instead of a clear message.
   if (process.env.FV_DEV === "1") {
     const keyFile = join(FV, "dev-chrome-key.txt");
     if (!existsSync(keyFile))
@@ -1117,7 +1219,15 @@ function applyBrowser() {
 }
 
 // ---------- 5. verify ----------
-const ALLOWED_BRAND_KEYS = new Set(["fastvaultAttribution", "getMobileApp"]);
+// getMobileApp (desktop), secureDevicesBody and getTheMobileAppDesc (browser) all deliberately say
+// "official Bitwarden apps" — the allowed phrasing for a sentence about the official Bitwarden
+// apps, per the brand overrides in strings/overrides.*.en.json.
+const ALLOWED_BRAND_KEYS = new Set([
+  "fastvaultAttribution",
+  "getMobileApp",
+  "secureDevicesBody",
+  "getTheMobileAppDesc",
+]);
 // Exact-string opt-outs for the code literal-string check below: never-displayed internal
 // identifiers that still contain "Bitwarden" as a substring. Each would need a change outside
 // this task's scope to fix correctly (not a simple anchored rename), and none leak the brand to
@@ -1275,6 +1385,20 @@ function verify() {
   if (!proxySrc.includes(`all_paths(${IPC_NAME})`))
     problems.push(`proxy/src/main.rs: proxy does not connect to ${IPC_NAME}`);
   if (/bitwarden/i.test(proxySrc)) problems.push(`proxy/src/main.rs: still mentions bitwarden`);
+  // Same parity check, same reasoning, for the passkey-provider IPC pipe ("af" -> "fvaf"): TS
+  // listens on it, the Rust autofill_provider crate's #[cfg(not(test))] constant must equal it.
+  const AUTOFILL_IPC_NAME = `"fvaf"`;
+  if (
+    !read("apps/desktop/src/autofill/main/main-desktop-autofill.service.ts").includes(
+      `AutofillIpcServer.listen(\n      ${AUTOFILL_IPC_NAME},`,
+    )
+  )
+    problems.push(
+      `main-desktop-autofill.service.ts: desktop app does not listen on ${AUTOFILL_IPC_NAME}`,
+    );
+  const autofillProviderSrc = read("apps/desktop/desktop_native/autofill_provider/src/lib.rs");
+  if (!autofillProviderSrc.includes(`static IPC_PATH: &str = ${AUTOFILL_IPC_NAME};`))
+    problems.push(`autofill_provider/src/lib.rs: IPC_PATH is not ${AUTOFILL_IPC_NAME}`);
   // Backstop for the two browser-extension file kinds the .ts/.html walk above cannot see:
   // popup/index.ejs (an .ejs template) and the two manifest .json files. Task 1's fix rounds found
   // real "Bitwarden" leaks in exactly these files, invisible to REWRITE_ROOTS' `/\.(ts|html)$/`

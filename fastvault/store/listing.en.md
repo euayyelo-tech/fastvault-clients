@@ -2,7 +2,7 @@
 
 Every sentence here states something already true on fastvault.app. No
 ratings, user counts, awards, audits or "free" — the site's copy rules
-(`fastvault/scripts/check-todo.mjs` in the site repo) apply to store text too.
+(`scripts/check-todo.mjs` in the site repo) apply to store text too.
 
 ## Name (≤40 chars)
 
@@ -10,24 +10,24 @@ FastVault Password Manager
 
 ## Summary (≤132 chars)
 
-Your passwords, passkeys and notes, encrypted on your device. FastVault stores the locked box, never the key.
+Your passwords and notes, encrypted on your device. FastVault stores the locked box, never the key.
 
 ## Description
 
-FastVault keeps your passwords, passkeys, cards, identities and secure notes in a vault that is encrypted on your device with a master password only you know. Nothing readable ever leaves your device: FastVault stores the locked box and never holds the key.
+FastVault keeps your passwords, cards, identities and secure notes in a vault that is encrypted on your device with a master password only you know. Nothing readable ever leaves your device: FastVault stores the locked box and never holds the key.
 
 This extension fills in logins as you browse, saves new ones as you create them, generates strong passwords, and syncs your vault to FastVault's servers so it is there on every device you use.
 
 What you get
 
-- Logins, passkeys, cards, identities, secure notes and custom fields
+- Logins, cards, identities, secure notes and custom fields
 - Autofill and save-as-you-go on any site
 - A password generator
 - Two-step login with an authenticator app or security key
 - Emergency access — a trusted person can get in if you cannot
 - Sharing, on the Family plan
 - Import from another password manager
-- The FastVault desktop app for Windows and Linux, which this extension can unlock with
+- The FastVault desktop app for Windows and Linux
 
 FastVault is a paid service — there is no free tier. Plans and prices are at https://fastvault.app/pricing. You need a FastVault account to use this extension.
 

@@ -1,11 +1,24 @@
-[
-  "getMobileApp",
-  "getBrowserExtension",
-  "helpAndFeedback",
-  "fileBugReport",
-  "authenticatorAppDescV2",
-  "extName",
-  "extDesc",
-  "helpCenter",
-  "aboutBitwarden"
-]
+{
+  "desktop": [
+    "getMobileApp",
+    "getBrowserExtension",
+    "helpAndFeedback",
+    "fileBugReport",
+    "authenticatorAppDescV2"
+  ],
+  "browser": [
+    "extName",
+    "extDesc",
+    "helpCenter",
+    "aboutBitwarden",
+    "authenticatorAppDescV2",
+    "secureDevicesBody",
+    "bitwardenAuthenticator",
+    "continueToAuthenticatorPageDesc",
+    "bitwardenSecretsManager",
+    "continueToSecretsManagerPageDesc",
+    "freeBitwardenFamilies",
+    "freeBitwardenFamiliesPageDesc",
+    "getTheMobileAppDesc"
+  ]
+}

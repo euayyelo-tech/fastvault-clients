@@ -1,12 +1,33 @@
 {
   "extName": { "message": "FastVault Password Manager" },
   "extDesc": {
-    "message": "Your passwords, passkeys and notes, encrypted on your device. FastVault stores the locked box, never the key."
+    "message": "Your passwords and notes, encrypted on your device. FastVault stores the locked box, never the key."
   },
   "appName": { "message": "FastVault" },
   "fastvaultAttribution": {
     "message": "FastVault is based on the open-source Bitwarden® clients (GPL-3.0). Bitwarden is a trademark of Bitwarden, Inc., which is not affiliated with FastVault."
   },
   "helpCenter": { "message": "Help and support" },
-  "aboutBitwarden": { "message": "About FastVault" }
+  "aboutBitwarden": { "message": "About FastVault" },
+  "authenticatorAppDescV2": {
+    "message": "Use an authenticator app such as Google Authenticator, Microsoft Authenticator or Authy to generate time-based verification codes."
+  },
+  "secureDevicesBody": {
+    "message": "Log in on your other computers with the FastVault browser extension and desktop app, and on your phone with the official Bitwarden apps."
+  },
+  "bitwardenAuthenticator": { "message": "Authenticator app" },
+  "continueToAuthenticatorPageDesc": {
+    "message": "Use an authenticator app such as Google Authenticator, Microsoft Authenticator or Authy to generate TOTP codes for 2-step verification."
+  },
+  "bitwardenSecretsManager": { "message": "Secrets management" },
+  "continueToSecretsManagerPageDesc": {
+    "message": "FastVault does not offer a separate secrets-manager product."
+  },
+  "freeBitwardenFamilies": { "message": "Family sharing" },
+  "freeBitwardenFamiliesPageDesc": {
+    "message": "FastVault has no free-plan eligibility program. See fastvault.app/pricing for plans."
+  },
+  "getTheMobileAppDesc": {
+    "message": "Access your passwords on the go with the official Bitwarden apps."
+  }
 }

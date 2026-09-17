@@ -63,8 +63,8 @@ fastvault -o source.zip`) and point them at `fastvault/README.md`'s build
 4. Listing text, screenshots, privacy policy URL as above. Category:
    Privacy & Security.
 5. Submit. The id is already `{5d0312ec-4a31-4081-b970-5ac6f03f9c19}` —
-   the desktop app allow-lists it today, so biometric unlock works from day
-   one on Firefox.
+   the desktop app already allow-lists this id; biometric unlock from the
+   store build is unproven until checked once after publishing.
 
 ## 4. Allow-list the Chrome and Edge ids, then publish
 
