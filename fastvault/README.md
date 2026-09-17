@@ -30,20 +30,43 @@ region, links and menus, build/packaging config, and the theme colours —
 is listed in full in `../NOTICE.md`; this file is about the mechanics of
 _how_, not a second copy of _what_.
 
+`node fastvault/apply.mjs --dry` is a full rehearsal: writes go into an
+in-memory overlay that the verification pass reads back, so a dry run
+exercises every anchor _and_ the residual-brand scan without touching the
+checkout. `fastvault/verify-build.mjs` is the second half of the same
+guarantee — run after `npm run build`, it re-scans the packaged output
+(`apps/desktop/build`: the locale tables in all 66 languages, the app
+manifest, and the string literals in the bundles) and fails on any
+"Bitwarden" that is not on a documented allow-list. Which directories the
+sweep covers is the single `REWRITE_ROOTS` constant in `apply.mjs`, used
+by both the rewrite and the verification so neither can drift ahead of
+the other. Widen it there; never add a second list.
+
 ## Releases (this is real and already live)
 
-`.github/workflows/fastvault-desktop.yml` builds the Windows desktop app
-on `windows-2022` runners whenever the `fastvault` branch is pushed or a
-`fastvault-desktop-v*` tag is pushed (also runnable by hand via
-`workflow_dispatch`). It runs `apply.mjs` against a clean checkout, builds
-the Rust native modules and the Angular renderer, and packages `nsis`
-(installer) and `portable` targets with `electron-builder`, publishing
-them as GitHub Releases on this repo.
+`.github/workflows/fastvault-desktop.yml` **builds** the Windows desktop
+app on `windows-2022` runners on every push to the `fastvault` branch, on
+every `fastvault-desktop-v*` tag push, and on demand via
+`workflow_dispatch`. It runs `apply.mjs` against a clean checkout, builds
+the Rust native modules and the Angular renderer, re-checks the built
+output for brand leaks (`fastvault/verify-build.mjs`), and packages
+`nsis` (installer) and `portable` targets with `electron-builder`. Every
+run uploads those files as a workflow artifact.
 
-Two real releases exist today:
-[fastvault-desktop-v2026.7.0](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.0)
+**Only a tag push publishes a GitHub Release.** The release step is
+gated on `refs/tags/fastvault-desktop-v*`; a branch push builds and
+uploads an artifact and stops there. A tag run also checks first that the
+version in the tag name matches `fastvault/version.txt`, and fails before
+building if it does not — a mismatch would publish a release whose
+`latest.yml` disagrees with its own tag and break auto-update. So
+releasing is: bump `version.txt`, commit, push the branch, then push the
+matching `fastvault-desktop-vX.Y.Z` tag.
+
+Three real releases exist today:
+[fastvault-desktop-v2026.7.0](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.0),
+[fastvault-desktop-v2026.7.1](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.1)
 and
-[fastvault-desktop-v2026.7.1](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.1).
+[fastvault-desktop-v2026.7.2](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.2).
 Auto-update via `electron-updater`'s GitHub provider, pointed at this
 repo, has been proven working end to end: installing `2026.7.0` and then
 publishing `2026.7.1` had the running app offer the update and restart

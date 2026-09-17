@@ -6,9 +6,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
-# A release pushes the branch commit and the tag together, which used to start two full ~20 minute
-# builds of the same tree. One run per ref at a time; never cancel one in flight, because the run
-# that would be cancelled may be the one publishing a release.
+# One run per ref at a time, so rapid pushes to `fastvault` (or a re-pushed tag) queue instead of
+# running two ~20 minute builds of the same tree in parallel. cancel-in-progress stays false on
+# purpose: the run that would be cancelled could be the one uploading a release. Note this groups
+# per ref, so the branch push and the tag push of a release are still two runs — the branch one
+# just builds and uploads an artifact; only the tag one publishes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
