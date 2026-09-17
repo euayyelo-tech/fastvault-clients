@@ -998,18 +998,28 @@ function verify() {
       }
     }
   // Linux packaging files live outside REWRITE_ROOTS; check the four the overlay rewrites explicitly.
-  // after-pack.js is narrowed to /bitwarden-app/ instead of the general /bitwarden/i: its darwin-only
-  // signing branch legitimately names Bitwarden's own Apple codesigning identities ("Developer ID
-  // Application: Bitwarden Inc", "3rd Party Mac Developer Application: Bitwarden Inc") plus a comment
-  // referencing them — real Apple-registered certificate common names, not the binary-name string this
-  // task renamed, and out of scope (FastVault has no Bitwarden Inc certificate to sign with regardless).
+  // Two of the four are narrowed to /bitwarden-app/ instead of the general /bitwarden/i, because each
+  // carries an inert internal engineering reference this task does not rename:
+  //  - after-pack.js's darwin-only signing branch names Bitwarden's own Apple codesigning identities
+  //    ("Developer ID Application: Bitwarden Inc", "3rd Party Mac Developer Application: Bitwarden
+  //    Inc") plus a comment referencing them — real Apple-registered certificate common names, out of
+  //    scope (FastVault has no Bitwarden Inc certificate to sign with regardless).
+  //  - linux-wrapper.sh has one comment linking Bitwarden's own private Jira ("The follow-up task is
+  //    https://bitwarden.atlassian.net/browse/PM-31080.") documenting an Electron/Wayland upstream
+  //    bug workaround — an internal tracking link, not user-facing text, and not FastVault's ticket
+  //    to rewrite to.
+  // The other two (.desktop, .policy) are small, fully-covered by the replaceExact calls above, and
+  // checked with the general pattern so any future stray mention there still fails loudly.
   for (const f of [
     "apps/desktop/scripts/after-pack.js",
     "apps/desktop/resources/linux-wrapper.sh",
     "apps/desktop/resources/com.bitwarden.desktop.desktop",
     "apps/desktop/resources/com.bitwarden.desktop.policy",
   ]) {
-    const re = f.endsWith("after-pack.js") ? /bitwarden-app/i : /bitwarden/i;
+    const re =
+      f.endsWith("after-pack.js") || f.endsWith("linux-wrapper.sh")
+        ? /bitwarden-app/i
+        : /bitwarden/i;
     if (re.test(read(f))) problems.push(`${f}: still mentions bitwarden`);
   }
   if (problems.length) {
