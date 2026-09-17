@@ -329,6 +329,12 @@ function applyConfig() {
     j.portable.artifactName = "FastVault-Portable-${version}.${ext}";
     j.linux.desktop.entry.Name = "FastVault";
     j.linux.target = ["deb", "rpm", "AppImage"]; // no snap (Snap Store + unsquashfs post-step), no flatpak (Flathub)
+    // Guarded like the package.json author/repository checks below: anchored on upstream's exact
+    // value so a future upstream reword fails here instead of silently getting clobbered unnoticed.
+    // (Unlike `target` just above, which we always want overwritten to our exact list regardless of
+    // upstream's default — that one is deliberately left unguarded.)
+    if (j.linux.synopsis !== "A secure and free password manager for all of your devices.")
+      fail(`electron-builder.json: unexpected linux.synopsis ${JSON.stringify(j.linux.synopsis)}`);
     j.linux.synopsis = "FastVault password manager";
     j.snap.summary = "FastVault is a password manager for all of your devices.";
     j.snap.description = "Password manager.";
@@ -1021,10 +1027,13 @@ function verify() {
     let content = read(f);
     if (f.endsWith("linux-wrapper.sh")) {
       // Anchored like every other rule in this file: if upstream ever changes or removes this exact
-      // comment, fail loudly instead of leaving a stale, silently-inert exception in place.
+      // comment, report it as a problem (below, with everything else verify() finds) instead of
+      // leaving a stale, silently-inert exception in place. Pushed onto `problems` rather than a
+      // bare fail() so a developer sees this alongside every other residual-brand finding in one
+      // run, the same pattern every other check in verify() follows.
       if (!content.includes(LINUX_WRAPPER_JIRA_COMMENT))
-        fail(`${f}: expected Jira-comment line not found — update LINUX_WRAPPER_JIRA_COMMENT`);
-      content = content.replace(LINUX_WRAPPER_JIRA_COMMENT, "");
+        problems.push(`${f}: expected Jira-comment line not found — update LINUX_WRAPPER_JIRA_COMMENT`);
+      else content = content.replace(LINUX_WRAPPER_JIRA_COMMENT, "");
     }
     const re = f.endsWith("after-pack.js") ? /bitwarden-app/i : /bitwarden/i;
     if (re.test(content)) problems.push(`${f}: still mentions bitwarden`);
