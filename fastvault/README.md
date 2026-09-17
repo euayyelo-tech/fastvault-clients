@@ -62,11 +62,12 @@ building if it does not — a mismatch would publish a release whose
 releasing is: bump `version.txt`, commit, push the branch, then push the
 matching `fastvault-desktop-vX.Y.Z` tag.
 
-Three real releases exist today:
+Four real releases exist today:
 [fastvault-desktop-v2026.7.0](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.0),
-[fastvault-desktop-v2026.7.1](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.1)
+[fastvault-desktop-v2026.7.1](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.1),
+[fastvault-desktop-v2026.7.2](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.2)
 and
-[fastvault-desktop-v2026.7.2](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.2).
+[fastvault-desktop-v2026.7.3](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.3).
 Auto-update via `electron-updater`'s GitHub provider, pointed at this
 repo, has been proven working end to end: installing `2026.7.0` and then
 publishing `2026.7.1` had the running app offer the update and restart
@@ -74,17 +75,40 @@ into it.
 
 ## Building locally
 
-**Not available on this machine yet.** `fastvault/build-win.ps1` — the
-script that would set up a throwaway build worktree, run `apply.mjs`,
-build the Rust native modules, and package the app locally — does not
-exist yet. Writing it is a separate, still-pending task, blocked on this
-machine's local toolchain: Rust and the Visual Studio 2022 C++ Build
-Tools need an admin-rights install here that hasn't happened yet (see the
-design spec's §9 for the exact `winget` commands once that's cleared).
-This is a local-machine gap only — it has no bearing on CI or releases,
-which already work as described above. Do not treat this section as a
-placeholder for made-up build instructions; there genuinely is no local
-build script here today.
+`fastvault/build-win.ps1` sets up a throwaway build worktree at
+`../fastvault-clients-build` (sibling to this checkout), runs
+`apply.mjs` against it, builds the Rust native modules, runs the
+Angular/Electron build, re-checks the output with `verify-build.mjs`,
+and packages `nsis` + `portable` with `electron-builder` — the same
+steps CI runs, just local. Run it from the fork root:
+
+```
+pwsh fastvault/build-win.ps1              # full build, needs the native toolchain
+pwsh fastvault/build-win.ps1 -SkipNative  # skip the Rust build + packaging
+```
+
+The worktree reuses `node_modules` and the Rust `target` directory from
+this checkout via NTFS junctions, so `npm ci` and a from-scratch cargo
+build don't have to repeat on every run — the script creates those
+junctions itself the first time each one is missing, and its own
+`git reset --hard` is safe only because that worktree is defined as
+never holding real edits (see the comment in the script).
+
+`-SkipNative` exists because this development machine has no admin
+rights and can't install the Visual Studio 2022 C++ Build Tools that
+Rust needs to link on Windows (`where cl.exe` empty, `vswhere.exe`
+absent — see the design spec's §9 for the exact `winget` commands once
+that's cleared). With `-SkipNative`, the script has been run to
+completion on this machine and gets all the way through `apply.mjs`
+(verify: clean), the full `npm run build` (main/renderer/preload), and
+`fastvault/verify-build.mjs` (build output: clean) — real, passing
+verification of everything that doesn't need a compiled `.node`/`.exe`.
+It then stops deliberately before `electron-builder`, which needs
+`desktop_native/dist/*.exe` from the native build to package a
+complete app. The native build and packaging steps themselves remain
+genuinely unverified on this machine pending that toolchain — this is a
+local-machine gap only, with no bearing on CI or the releases above,
+which already build and package for real on every push.
 
 ## Taking a new upstream release
 
