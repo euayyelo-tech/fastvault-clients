@@ -7,8 +7,6 @@
     "authenticatorAppDescV2"
   ],
   "browser": [
-    "extName",
-    "extDesc",
     "helpCenter",
     "aboutBitwarden",
     "authenticatorAppDescV2",

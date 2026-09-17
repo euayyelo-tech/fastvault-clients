@@ -225,6 +225,10 @@ const LOCALE_DIRS = [
 // plain "bitwarden.com" substring replace would fire mid-word there and corrupt the host into a
 // garbled "fastvault.app<remainder>" domain instead of leaving a clean example.
 const SELF_HOSTED_URL_RE = /https:\/\/bitwarden\.[^\s<]+\.com/g;
+// Keys a manifest references via "__MSG_<key>__" — Chrome/Firefox require these present in
+// EVERY shipped locale, so they are forced to the English override everywhere below instead of
+// being dropped like ordinary in-app strings.
+const FORCE_EVERY_LOCALE = { browser: ["extName", "extDesc"] };
 function applyStrings() {
   // Per-app: the two apps' locale sets overlap (e.g. "aboutBitwarden" is a real key in BOTH), so a
   // single shared drop list silently deleted the desktop translation of any key added only for the
@@ -271,6 +275,16 @@ function applyStrings() {
         for (const [k, v] of Object.entries(overrides)) j[k] = v;
       } else {
         for (const k of drop) delete j[k];
+        // The browser manifest's name/description fields are literally "__MSG_extName__" /
+        // "__MSG_extDesc__" (apps/browser/src/manifest*.json) — Chrome requires that key to
+        // exist in EVERY locale folder the zip ships, or the Web Store rejects the upload
+        // ("translation ... missing in locale <x>"), one error per language. Deleting them
+        // (the `drop` list above) broke every non-English locale. There is no FastVault
+        // translation for 50+ languages, so every locale gets the English override text
+        // instead — an extension without full localisation showing its name in English in an
+        // unlocalised language is normal and not a Chrome Web Store violation.
+        if (FORCE_EVERY_LOCALE[app])
+          for (const k of FORCE_EVERY_LOCALE[app]) if (k in overrides) j[k] = overrides[k];
       }
       write(file, JSON.stringify(j, null, 2) + "\n");
       files++;
