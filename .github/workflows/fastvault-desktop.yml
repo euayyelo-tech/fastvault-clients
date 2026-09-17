@@ -5,7 +5,7 @@ on:
     tags: ["fastvault-desktop-v*"]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 # One run per ref at a time, so rapid pushes to `fastvault` (or a re-pushed tag) queue instead of
 # running two ~20 minute builds of the same tree in parallel. cancel-in-progress stays false on
 # purpose: the run that would be cancelled could be the one uploading a release. Note this groups
@@ -23,10 +23,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 24, cache: npm, cache-dependency-path: "**/package-lock.json" }
-      # Third-party actions are pinned to a commit SHA, not a mutable tag: this job has
-      # `contents: write` and produces the binaries users auto-install, so a retagged v2 would be
-      # a straight supply-chain compromise of a password manager's release pipeline. The
-      # actions/* steps above are GitHub's own. Re-pin deliberately when updating.
+      # Third-party actions are pinned to a commit SHA, not a mutable tag: this job produces the
+      # binaries users auto-install, so a retagged v2 would be a straight supply-chain compromise
+      # of a password manager's release pipeline. The actions/* steps above are GitHub's own.
+      # Re-pin deliberately when updating.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2 (v2.9.2)
         with: { workspaces: "apps/desktop/desktop_native -> target" }
       # The tag must agree with fastvault/version.txt. electron-builder stamps version.txt's value
@@ -78,6 +78,8 @@ jobs:
             apps/desktop/dist/FastVault-*.exe
             apps/desktop/dist/*.blockmap
             apps/desktop/dist/latest.yml
+          if-no-files-found: error
+          overwrite: true
 
   linux:
     # ubuntu-22.04 on purpose: upstream keeps its Linux job on the oldest supported runner so the
@@ -128,13 +130,20 @@ jobs:
             apps/desktop/dist/FastVault-*.deb
             apps/desktop/dist/FastVault-*.rpm
             apps/desktop/dist/FastVault-*.AppImage
+            apps/desktop/dist/*.blockmap
             apps/desktop/dist/latest-linux.yml
           if-no-files-found: error
+          overwrite: true
 
   release:
     if: startsWith(github.ref, 'refs/tags/fastvault-desktop-v')
     needs: [windows, linux]
-    runs-on: ubuntu-22.04
+    # ubuntu-latest is fine here (unlike the linux BUILD job above): this job only downloads
+    # artifacts and uploads them to a GitHub Release, it never compiles anything, so it has no
+    # glibc-compatibility reason to track the same pinned/retiring runner as the build job.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -146,10 +155,40 @@ jobs:
         run: |
           {
             echo "RELEASE_BODY<<EOF"
-            echo "Windows x64 (installer + portable) and Linux x64 (.deb, .rpm, .AppImage). Based on bitwarden/clients $(tr -d '[:space:]' < fastvault/UPSTREAM) (see fastvault/UPSTREAM). Unsigned until code signing is configured. On Linux only the AppImage auto-updates; .deb/.rpm update through your package manager."
+            echo "Windows x64 (installer + portable) and Linux x64 (.deb, .rpm, .AppImage). Based on bitwarden/clients $(tr -d '[:space:]' < fastvault/UPSTREAM) (see fastvault/UPSTREAM). Windows: unsigned until code signing is configured. Linux: unsigned by design (no signing convention for deb/rpm/AppImage). On Linux only the AppImage auto-updates; .deb/.rpm update through your package manager."
             echo "EOF"
           } >> "$GITHUB_ENV"
       - run: ls -la dist
+      - name: Assert all expected release assets are present
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#fastvault-desktop-v}"
+          # Literal filenames, not glob patterns: fail_on_unmatched_files on the release step below
+          # only fails when a glob matches ZERO files, so a pattern like "FastVault-*.exe" would
+          # still "pass" with only one of the two .exe present. Check each real expected file by
+          # name so a partial upload (one job's artifact missing a file) fails loudly here instead
+          # of quietly publishing an incomplete release.
+          expected=(
+            "FastVault-Installer-${version}.exe"
+            "FastVault-Portable-${version}.exe"
+            "FastVault-Installer-${version}.exe.blockmap"
+            "latest.yml"
+            "FastVault-${version}-amd64.deb"
+            "FastVault-${version}-x86_64.rpm"
+            "FastVault-${version}-x86_64.AppImage"
+            "latest-linux.yml"
+          )
+          missing=()
+          for f in "${expected[@]}"; do
+            if [ ! -f "dist/$f" ]; then
+              missing+=("$f")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::missing expected release asset(s): ${missing[*]}"
+            exit 1
+          fi
+          echo "all ${#expected[@]} expected release assets present in dist/"
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (v2.6.2)
         with:
           name: FastVault Desktop ${{ github.ref_name }}
