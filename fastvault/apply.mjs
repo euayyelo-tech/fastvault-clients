@@ -999,6 +999,45 @@ function applyBrowser() {
   removeElement(settings, `routerLink="/download-bitwarden"`);
   removeElement(settings, `routerLink="/more-from-bitwarden"`);
 
+  // The two menu entries above pointed at these routes; with no way to reach them from the UI,
+  // drop the routes (and their now-unused imports) too, or the pages — still Bitwarden-branded —
+  // stay reachable by direct navigation (e.g. a saved deep link) even with the menu gone.
+  const routing = "apps/browser/src/popup/app-routing.module.ts";
+  replaceExact(
+    routing,
+    `  {
+    path: "more-from-bitwarden",
+    component: MoreFromBitwardenPageComponent,
+    canActivate: [authGuard],
+    data: { elevation: 2 } satisfies RouteDataProperties,
+  },
+`,
+    "",
+  );
+  replaceExact(
+    routing,
+    `  {
+    path: "download-bitwarden",
+    component: DownloadBitwardenComponent,
+    canActivate: [authGuard],
+    data: { elevation: 2 } satisfies RouteDataProperties,
+  },
+`,
+    "",
+  );
+  replaceExact(
+    routing,
+    `import { DownloadBitwardenComponent } from "../vault/popup/settings/download-bitwarden.component";
+`,
+    "",
+  );
+  replaceExact(
+    routing,
+    `import { MoreFromBitwardenPageComponent } from "../vault/popup/settings/more-from-bitwarden-page.component";
+`,
+    "",
+  );
+
   // Desktop bridge host name (2 call sites)
   for (const f of [
     "apps/browser/src/background/nativeMessaging.background.ts",
