@@ -4,6 +4,9 @@
 //   node fastvault/apply.mjs            apply + verify
 //   node fastvault/apply.mjs --dry      report what would change, write nothing
 // Every replacement is anchored: wrong match count => exit 1 (upstream drift; fix here, never in the tree).
+// --dry is a full rehearsal, not a weaker check: writes go to an in-memory overlay that read() and
+// verify() see, so a dry run proves the anchors AND the verification, and leaves the tree untouched.
+// After building, fastvault/verify-build.mjs re-checks the packaged output for brand leaks.
 import {
   readFileSync,
   writeFileSync,
@@ -15,6 +18,7 @@ import {
   statSync,
 } from "node:fs";
 import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(
   dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")),
@@ -29,15 +33,65 @@ const VAULT = "https://vault.fastvault.app";
 const FIREFOX_ID = "{5d0312ec-4a31-4081-b970-5ac6f03f9c19}";
 const CHROME_IDS = []; // filled by plan B after the first store uploads, e.g. "chrome-extension://<id>/"
 
+// ---------- shared scope ----------
+// The ONE list of directories the brand sweep rewrites and verify() re-scans. Both sides must use
+// the same list or the overlay gets a blind spot: until 2026.7.2 applyCode()'s sweep and verify()'s
+// URL scan kept two separate, coincidentally-similar lists, so anything in neither (libs/importer,
+// libs/key-management-ui, libs/auto-confirm, libs/logging-angular, libs/common's autofill
+// constants, ...) was neither rewritten nor caught — the desktop Import screen shipped visible
+// bitwarden.com/help links in the 2026.7.0 and 2026.7.1 releases because of exactly that.
+// `libs` is walked whole on purpose. Do not replace it with sub-directories.
+const REWRITE_ROOTS = ["apps/desktop/src", "apps/browser/src", "libs"];
+// Files the sweep skips and verify() does not scan. Shared by both for the same reason as
+// REWRITE_ROOTS: a file the sweep skips must not be a file verify() then fails on, and vice versa.
+// (Named ALLOWED_URL_FILES before 2026.7.2, when it guarded only the URL scan.)
+const EXCLUDED_FILES = [
+  // Jest specs and Storybook stories: never compiled into a shipped app.
+  /\.spec\.ts$/,
+  /\.stories\.ts$/,
+  // Storybook-only fixture/catalogue data that is not itself a .stories.ts file:
+  // libs/components/src/stories/** and the browser autofill lit-stories/** mock data.
+  /[\\/]stories[\\/]/,
+  /[\\/]lit-stories[\\/]/,
+  // Bitwarden's own phishing-domain feed URL (assets.bitwarden.com). Behind the
+  // `phishing-detection` flag, which Vaultwarden never turns on — see fastvault/README.md.
+  /phishing-resources\.ts$/,
+  // LastPass direct import is documented as non-functional in this fork (it needs an OAuth
+  // redirect registered to Bitwarden's own client id); its bitwarden:// scheme is rewritten by a
+  // dedicated anchored rule in applyCode() instead.
+  /lastpass-direct-import\.service\.ts$/,
+  // Importer test fixtures (libs/importer/src/importers/spec-data/**): saved-website sample data,
+  // where "https://bitwarden.com" is the *content of a test vault item*, not a brand reference.
+  // NOTE: the separator class must accept "\\" — join() produces backslashes on Windows, which is
+  // what CI runs on, so the old /\/importers\// spelling never matched anything there.
+  /[\\/]importers[\\/]/,
+];
+// HTML body-text check only (see verify()): the quoted-literal scan still covers these files.
+const ALLOWED_HTML_TEXT_FILES = [
+  // "© {{year}} Bitwarden Inc." — web-vault-only. anon-layout.component.ts's `hideYearAndVersion`
+  // is true on desktop and browser (ClientType check, ~line 97), so this line is never rendered by
+  // anything this fork builds. Confirmed inert in the 2026-09-17 review; left alone deliberately.
+  /anon-layout\.component\.html$/,
+];
+
 const log = (...a) => console.log("[fastvault]", ...a);
 const fail = (msg) => {
   console.error("[fastvault] FAIL:", msg);
   process.exit(1);
 };
 const rel = (p) => p.replace(ROOT + "\\", "").replace(ROOT + "/", "");
-const read = (p) => readFileSync(join(ROOT, p), "utf8");
+// --dry writes into an in-memory overlay instead of the disk, and read() prefers it. Without this
+// the run was guaranteed to fail: write() was a no-op but verify() re-read the untouched files and
+// reported every single rewrite as an unfixed "residual" (hundreds of false failures), so --dry
+// could never be used for what it is for. Paths are normalised because the explicit rules pass
+// forward-slash paths while walk() yields OS-native ones.
+const overlay = new Map();
+const key = (p) => p.replace(/\\/g, "/");
+const read = (p) =>
+  overlay.has(key(p)) ? overlay.get(key(p)) : readFileSync(join(ROOT, p), "utf8");
 const write = (p, s) => {
-  if (!DRY) writeFileSync(join(ROOT, p), s);
+  if (DRY) overlay.set(key(p), s);
+  else writeFileSync(join(ROOT, p), s);
 };
 
 // replaceExact: `from` must occur exactly `count` times (default 1).
@@ -163,17 +217,24 @@ function applyStrings() {
       `${app}: ${files} locale files, ${hits} brand mentions renamed, ${Object.keys(overrides).length} overrides`,
     );
   }
-  // Store listing texts (plan B uses them; renaming now is harmless and keeps one rule)
+  // Store listing texts (plan B uses them; renaming now is harmless and keeps one rule).
+  // These are .resx, not .json — until 2026.7.2 this loop filtered for ".json", matched nothing,
+  // and logged "0 files renamed" indistinguishably from "correctly found nothing to rename".
+  // The anchor is therefore the FILE COUNT, not the rename count: 0 renames can be legitimate once
+  // the strings are already FastVault's, but 0 .resx files found means the layout moved.
   const storeDir = "apps/browser/store/locales";
-  let n = 0;
-  for (const f of walk(storeDir, (p) => p.endsWith(".json"))) {
+  let seen = 0,
+    n = 0;
+  for (const f of walk(storeDir, (p) => p.endsWith(".resx"))) {
+    seen++;
     const s = read(f);
     if (s.includes("Bitwarden")) {
       write(f, s.split("Bitwarden").join("FastVault"));
       n++;
     }
   }
-  log(`store locales: ${n} files renamed`);
+  if (seen === 0) fail(`${storeDir}: no .resx files found — did the store-locale layout change?`);
+  log(`store locales: ${seen} .resx files, ${n} renamed`);
 }
 
 // ---------- 3. config (JSON) ----------
@@ -193,10 +254,29 @@ function applyConfig() {
     j.protocols = [{ name: "FastVault", schemes: ["fastvault"] }];
     j.win.target = ["nsis", "portable"];
     delete j.win.signtoolOptions;
-    const azure =
-      process.env.AZURE_SIGN_ENDPOINT &&
-      process.env.AZURE_SIGN_ACCOUNT &&
-      process.env.AZURE_SIGN_PROFILE;
+    // Signing needs SIX env vars, split across two consumers: this script reads the three
+    // AZURE_SIGN_* ones to write azureSignOptions into electron-builder.json, and
+    // electron-builder itself reads the three AZURE_TENANT_ID / CLIENT_ID / CLIENT_SECRET
+    // credentials at packaging time. Configure one trio without the other and the build either
+    // ships silently unsigned (SIGN_* missing) or dies deep inside electron-builder minutes later
+    // (credentials missing). All six, or none.
+    const AZURE_VARS = [
+      "AZURE_SIGN_ENDPOINT",
+      "AZURE_SIGN_ACCOUNT",
+      "AZURE_SIGN_PROFILE",
+      "AZURE_TENANT_ID",
+      "AZURE_CLIENT_ID",
+      "AZURE_CLIENT_SECRET",
+    ];
+    const setVars = AZURE_VARS.filter((v) => (process.env[v] ?? "").trim() !== "");
+    if (setVars.length !== 0 && setVars.length !== AZURE_VARS.length)
+      fail(
+        `code signing is half-configured: ${setVars.length}/6 AZURE_* vars set ` +
+          `(missing ${AZURE_VARS.filter((v) => !setVars.includes(v)).join(", ")}). ` +
+          `Set all six or none — a partial set ships an unsigned build or fails at packaging time.`,
+      );
+    const azure = setVars.length === AZURE_VARS.length;
+    log(azure ? "code signing: all 6 AZURE_* vars present" : "code signing: off (no AZURE_* vars)");
     if (azure) {
       j.win.publisherName = "FSITES LTD";
       j.win.azureSignOptions = {
@@ -238,6 +318,17 @@ function applyConfig() {
     j.description = "FastVault password manager";
     j.version = VERSION;
     j.homepage = SITE;
+    // `author` and `repository` ship inside the packaged app (build/package.json) and still named
+    // Bitwarden Inc. in 2026.7.0/2026.7.1. Anchored on the upstream values so an upstream change
+    // fails here instead of silently writing over something different. `name` is deliberately left
+    // as @bitwarden/desktop: it is the npm package identity, not shown anywhere, and Electron's
+    // app.getName() already resolves to productName.
+    if (j.author !== "Bitwarden Inc. <hello@bitwarden.com> (https://bitwarden.com)")
+      fail(`apps/desktop/src/package.json: unexpected author ${JSON.stringify(j.author)}`);
+    j.author = "FSITES LTD <support@fastvault.app> (https://fastvault.app)";
+    if (j.repository?.url !== "git+https://github.com/bitwarden/clients.git")
+      fail(`apps/desktop/src/package.json: unexpected repository ${JSON.stringify(j.repository)}`);
+    j.repository.url = `git+https://github.com/${REPO}.git`;
   });
   editJson("apps/browser/src/manifest.json", (j) => {
     j.short_name = "FastVault";
@@ -498,31 +589,162 @@ function applyCode() {
     2,
   );
 
-  // Generic link rules across the apps and libs (counts printed; each must fire)
+  // ---- brought in scope by the 2026.7.2 widening of REWRITE_ROOTS ----
+  // Every vault export was written as bitwarden_export_<date>.json (and bitwarden_org_export_...,
+  // bitwarden_encrypted_export_...). The prefix is the only brand string; the file FORMAT is
+  // unchanged, so a FastVault export still imports into any Bitwarden-compatible client.
+  const exportHelper = "libs/tools/export-vault-core/src/services/export-helper.ts";
+  replaceExact(
+    exportHelper,
+    `    return "bitwarden" + (prefix ? "_" + prefix : "") + "_export_" + dateString + "." + format;`,
+    `    return "fastvault" + (prefix ? "_" + prefix : "") + "_export_" + dateString + "." + format;`,
+  );
+  // ...and the spec that pins the old prefix, so `npm test` stays honest about the rename.
+  replaceRegexMin(
+    `${exportHelper.replace(/\.ts$/, ".spec.ts")}`,
+    /\^bitwarden_/g,
+    "^fastvault_",
+    5,
+  );
+
+  // Import screen. The format picker's own labels named the upstream brand for a format FastVault
+  // itself produces, and the per-format help text told the user to upload their file "to
+  // Bitwarden". The option IDS (bitwardenjson / bitwardencsv / bitwardenpasswordprotected) are the
+  // persisted, on-the-wire format identifiers and are deliberately NOT renamed — only the labels.
+  const importOptions = "libs/importer/src/models/import-options.ts";
+  replaceExact(
+    importOptions,
+    `{ id: "bitwardenjson", name: "Bitwarden (json)" }`,
+    `{ id: "bitwardenjson", name: "FastVault (json)" }`,
+  );
+  replaceExact(
+    importOptions,
+    `{ id: "bitwardencsv", name: "Bitwarden (csv)" }`,
+    `{ id: "bitwardencsv", name: "FastVault (csv)" }`,
+  );
+  replaceExact(
+    "libs/importer/src/components/import.component.html",
+    `          resulting <code>my_passwords.json</code> file here to Bitwarden.`,
+    `          resulting <code>my_passwords.json</code> file here to FastVault.`,
+  );
+
+  // Flight-recorder diagnostic export: another generated FILE NAME carrying the upstream brand
+  // (Bitwarden-diagnostic-report-YYYY-MM-DD.csv). It is a template literal, which is why the
+  // double-quote-only literal scan never saw it — verify() now checks backtick spans too.
+  const flightRecorder = "libs/logging/src/flight-recorder-export.ts";
+  replaceRegexMin(flightRecorder, /Bitwarden-diagnostic-report/g, "FastVault-diagnostic-report", 2);
+  replaceRegexMin(
+    "libs/logging/src/flight-recorder-export.spec.ts",
+    /Bitwarden-diagnostic-report/g,
+    "FastVault-diagnostic-report",
+    4,
+  );
+  // Firefox sidebar-action tooltip (browser extension).
+  replaceExact(
+    "apps/browser/src/platform/badge/badge-browser-api.ts",
+    'const title = `Bitwarden${Utils.isNullOrEmpty(text) ? "" : ` [${text}]`}`;',
+    'const title = `FastVault${Utils.isNullOrEmpty(text) ? "" : ` [${text}]`}`;',
+  );
+
+  // Self-referential entry in the generator's vendor registry. The id (Vendor.bitwarden) is a
+  // persisted identifier and stays; `name` is the brand name rendered for a vendor's extensions.
+  replaceExact(
+    "libs/common/src/tools/extension/vendor/bitwarden.ts",
+    `  name: "Bitwarden",`,
+    `  name: "FastVault",`,
+  );
+
+  // Browser extension surfaces (plan B builds the extension; these are rewritten now so the
+  // widened verify() has nothing left to trip on and plan B starts from a clean base).
+  for (const [f, from, to] of [
+    [
+      "apps/browser/src/autofill/notification/bar.html",
+      `<title>Bitwarden</title>`,
+      `<title>FastVault</title>`,
+    ],
+    [
+      "apps/browser/src/autofill/overlay/inline-menu/pages/button/button.html",
+      `<title>Bitwarden inline menu button</title>`,
+      `<title>FastVault inline menu button</title>`,
+    ],
+    [
+      "apps/browser/src/autofill/overlay/inline-menu/pages/list/list.html",
+      `<title>Bitwarden vault</title>`,
+      `<title>FastVault vault</title>`,
+    ],
+    [
+      "apps/browser/src/autofill/overlay/inline-menu/pages/menu-container/menu-container.html",
+      `<title>Bitwarden inline menu</title>`,
+      `<title>FastVault inline menu</title>`,
+    ],
+    [
+      "apps/browser/src/platform/offscreen-document/index.html",
+      `<title>Bitwarden Offscreen Document</title>`,
+      `<title>FastVault Offscreen Document</title>`,
+    ],
+    [
+      "apps/browser/src/sidepanel-disabled.html",
+      `<title>Bitwarden</title>`,
+      `<title>FastVault</title>`,
+    ],
+    [
+      "apps/browser/src/autofill/browser/main-context-menu-handler.ts",
+      `        title: "Bitwarden",`,
+      `        title: "FastVault",`,
+    ],
+    [
+      "apps/browser/src/dirt/phishing-detection/popup/protected-by-component.html",
+      `"protectedBy" | i18n: "Bitwarden phishing blocker"`,
+      `"protectedBy" | i18n: "FastVault phishing blocker"`,
+    ],
+    [
+      "apps/browser/src/tools/popup/settings/about-dialog/about-dialog.component.html",
+      `  <div bitDialogTitle>Bitwarden</div>`,
+      `  <div bitDialogTitle>FastVault</div>`,
+    ],
+    [
+      "apps/browser/src/tools/popup/settings/about-dialog/about-dialog.component.html",
+      `    <p>&copy; Bitwarden Inc. 2015-{{ year }}</p>`,
+      `    <p>&copy; FSITES LTD. {{ year }}</p>\n    <p>{{ "fastvaultAttribution" | i18n }}</p>`,
+    ],
+  ])
+    replaceExact(f, from, to);
+  // Console/log lines naming the desktop app the extension talks to (comments included).
+  replaceRegexMin(
+    "apps/browser/src/platform/ipc/ipc-background.service.ts",
+    /Bitwarden Desktop/g,
+    "FastVault Desktop",
+    4,
+  );
+  replaceRegexMin(
+    "apps/browser/src/background/nativeMessaging.background.ts",
+    /Bitwarden Desktop/g,
+    "FastVault Desktop",
+    7,
+  );
+
+  // Generic link rules across the apps and libs (counts printed; each must fire).
+  // The trailing character class excludes "<" and ">" as well as quotes/backticks/parens: an
+  // Angular template renders a bare URL as its own link text ("...export-your-data/</a>"), and
+  // without that exclusion the greedy match swallowed the closing tag and corrupted the markup.
   const rules = [
-    [/https:\/\/bitwarden\.com\/help\/?[^"'`)\s]*/g, `${SITE}/support`],
+    [/https:\/\/bitwarden\.com\/help\/?[^"'`)<>\s]*/g, `${SITE}/support`],
     [/https:\/\/bitwarden\.com\/terms\/?/g, `${SITE}/legal/terms`],
     [/https:\/\/bitwarden\.com\/privacy\/?/g, `${SITE}/legal/privacy`],
-    [/https:\/\/bitwarden\.com\/download\/?[^"'`)\s]*/g, `${SITE}/apps`],
+    [/https:\/\/bitwarden\.com\/download\/?[^"'`)<>\s]*/g, `${SITE}/apps`],
     [/https:\/\/bitwarden\.com\/browser-start\/?/g, `${SITE}/apps`],
-    [/https:\/\/bitwarden\.com\/products\/[^"'`)\s]*/g, `${SITE}/`],
+    [/https:\/\/bitwarden\.com\/products\/[^"'`)<>\s]*/g, `${SITE}/`],
     [/https:\/\/bitwarden\.com\/email-preferences/g, `${SITE}/legal/privacy`],
-    [/https:\/\/bitwarden\.com\/go\/[^"'`)\s]*/g, `${SITE}/pricing`],
+    [/https:\/\/bitwarden\.com\/go\/[^"'`)<>\s]*/g, `${SITE}/pricing`],
     [/https:\/\/bitwarden\.com\/contact\/?/g, `${SITE}/support`],
     [/https:\/\/blog\.bitwarden\.com\/?/g, `${SITE}`],
   ];
-  const targets = [
-    "apps/desktop/src",
-    "apps/browser/src",
-    "libs/auth/src",
-    "libs/angular/src",
-    "libs/vault/src",
-    "libs/components/src",
-    "libs/key-management",
-  ];
   const fired = rules.map(() => 0);
-  for (const t of targets)
-    for (const f of walk(t, (p) => /\.(ts|html)$/.test(p) && !/\.(spec|stories)\.ts$/.test(p))) {
+  for (const t of REWRITE_ROOTS)
+    for (const f of walk(
+      t,
+      (p) => /\.(ts|html)$/.test(p) && !EXCLUDED_FILES.some((re) => re.test(p)),
+    )) {
       let s = read(f),
         changed = false;
       rules.forEach(([re, to], i) => {
@@ -576,13 +798,6 @@ function applyCode() {
 
 // ---------- 5. verify ----------
 const ALLOWED_BRAND_KEYS = new Set(["fastvaultAttribution", "getMobileApp"]);
-const ALLOWED_URL_FILES = [
-  /\.spec\.ts$/,
-  /\.stories\.ts$/,
-  /phishing-resources\.ts$/,
-  /lastpass-direct-import\.service\.ts$/,
-  /\/importers\//,
-];
 // Exact-string opt-outs for the code literal-string check below: never-displayed internal
 // identifiers that still contain "Bitwarden" as a substring. Each would need a change outside
 // this task's scope to fix correctly (not a simple anchored rename), and none leak the brand to
@@ -606,7 +821,30 @@ const ALLOWED_LITERAL_STRINGS = new Set([
   // electron-builder.json's win.target, so FastVault never produces an MSIX/Store build this
   // check could match.
   `"8bitSolutionsLLC.BitwardenBeta_"`,
+  // HTTP header names the SERVER reads (libs/common/src/services/api.service.ts). These are
+  // wire-protocol identifiers, not brand text: Vaultwarden/Bitwarden Server parse them by exact
+  // name, so renaming them breaks every request the app makes.
+  `"Bitwarden-Client-Name"`,
+  `"Bitwarden-Client-Version"`,
+  `"Bitwarden-Package-Type"`,
 ]);
+// Pattern opt-outs for the same check. These cover mechanical CLASSES of internal identifier that
+// would otherwise need dozens of near-identical exact entries; each is deliberately narrow enough
+// that a real display string cannot match it (all three require a lowercase camelCase head, which
+// a user-facing sentence or a bare "Bitwarden" never has).
+const ALLOWED_LITERAL_PATTERNS = [
+  // camelCase i18n lookup KEYS ("aboutBitwarden", "continueToBitwardenDotCom", "newToBitwarden",
+  // "saveToBitwarden", ...) and Angular template handler names ("openFreeBitwardenFamiliesPage()").
+  // The displayed .message value behind every one of these keys is already renamed by
+  // applyStrings(); renaming the key itself means touching all 66 locale files plus every call
+  // site, a different class of change than an anchored literal replace.
+  /^"[a-z][A-Za-z0-9]*Bitwarden[A-Za-z0-9]*(\(\))?"$/,
+  // ...the same keys inside an Angular template expression bound to an attribute:
+  //   title="{{ 'downloadBitwarden' | i18n }}"   [appA11yTitle]="'updateInBitwarden' | i18n"
+  /^"\{\{ ?'[a-z][A-Za-z0-9]*Bitwarden[A-Za-z0-9]*' ?\| ?i18n ?\}\}"$/,
+  /^"'[a-z][A-Za-z0-9]*Bitwarden[A-Za-z0-9]*' ?\| ?i18n"$/,
+];
+const URL_RE = /https?:\/\/(?!contributing\.)[a-z0-9.-]*bitwarden\.(com|eu|net)[^\s"'`)<>]*/g;
 function verify() {
   const problems = [];
   for (const { dir } of LOCALE_DIRS) {
@@ -615,40 +853,68 @@ function verify() {
       if (v?.message?.includes("Bitwarden") && !ALLOWED_BRAND_KEYS.has(k))
         problems.push(`${dir}/en: key ${k} still says Bitwarden`);
   }
-  for (const f of walk("apps/desktop/src", (p) => /\.(ts|html)$/.test(p))) {
-    if (ALLOWED_URL_FILES.some((re) => re.test(f))) continue;
-    const s = read(f);
-    for (const m of s.matchAll(/https?:\/\/[a-z0-9.-]*bitwarden\.(com|eu|net)[^\s"'`)]*/g))
-      problems.push(`${f}: ${m[0]}`);
-    for (const m of s.matchAll(/"[^"\n]*Bitwarden[^"\n]*"/g))
-      if (!ALLOWED_LITERAL_STRINGS.has(m[0])) problems.push(`${f}: literal ${m[0]}`);
-  }
-  for (const f of [
-    "libs/auth",
-    "libs/angular",
-    "libs/vault",
-    "libs/components",
-    "libs/common/src/platform/services",
-  ]) {
-    for (const g of walk(f, (p) => /\.(ts|html)$/.test(p))) {
-      if (ALLOWED_URL_FILES.some((re) => re.test(g))) continue;
-      for (const m of read(g).matchAll(
-        /https?:\/\/(?!contributing\.)[a-z0-9.-]*bitwarden\.(com|eu|net)[^\s"'`)]*/g,
-      ))
-        problems.push(`${g}: ${m[0]}`);
+  // One scan over exactly the files applyCode()'s sweep rewrote — same roots, same exclusions.
+  let scanned = 0;
+  for (const t of REWRITE_ROOTS)
+    for (const f of walk(
+      t,
+      (p) => /\.(ts|html)$/.test(p) && !EXCLUDED_FILES.some((re) => re.test(p)),
+    )) {
+      scanned++;
+      const s = read(f);
+      // a. residual bitwarden.com / .eu / .net URLs
+      for (const m of s.matchAll(URL_RE)) problems.push(`${f}: url ${m[0]}`);
+      // b. residual "…Bitwarden…" string literals
+      for (const m of s.matchAll(/"[^"\n]*Bitwarden[^"\n]*"/g))
+        if (
+          !ALLOWED_LITERAL_STRINGS.has(m[0]) &&
+          !ALLOWED_LITERAL_PATTERNS.some((re) => re.test(m[0]))
+        )
+          problems.push(`${f}: literal ${m[0]}`);
+      // b2. ...and template literals. Missing these is how the flight recorder kept writing
+      //     `Bitwarden-diagnostic-report-<date>.csv` through two releases. Interpolations and
+      //     nested quoted spans are blanked first: check (b) already owns anything quoted, and an
+      //     expression like `${t("saveToBitwarden")}` is an i18n key, not display text.
+      for (const m of s.matchAll(/`[^`\n]*Bitwarden[^`\n]*`/g)) {
+        const bare = m[0].replace(/"[^"\n]*"/g, '""').replace(/'[^'\n]*'/g, "''");
+        if (bare.includes("Bitwarden")) problems.push(`${f}: template literal ${m[0]}`);
+      }
+      // c. residual brand text in HTML *body* content — <title>Bitwarden</title>, "© Bitwarden
+      //    Inc.", "upload the file here to Bitwarden." None of those sit inside a quoted string,
+      //    so check (b) cannot see them. Quoted attribute values and Angular expressions are
+      //    blanked first so (b) stays the single owner of that class; the single-quote pattern is
+      //    deliberately restricted to identifier-shaped spans so an apostrophe in prose cannot
+      //    swallow a real mention.
+      if (f.endsWith(".html") && !ALLOWED_HTML_TEXT_FILES.some((re) => re.test(f))) {
+        const text = s
+          .replace(/"[^"\n]*"/g, '""')
+          .replace(/'[A-Za-z0-9_.\- ]*'/g, "''")
+          // Angular interpolations and control-flow conditions are code, not body text: their
+          // displayed value comes from the locale files (check (a) on LOCALE_DIRS owns those) and
+          // their identifiers (showDownloadBitwardenNudge$) are component properties.
+          .replace(/\{\{[^}]*\}\}/g, "")
+          .replace(/@[a-z]+ ?\([^)]*\)/g, "");
+        for (const line of text.split("\n"))
+          if (line.includes("Bitwarden")) problems.push(`${f}: html text ${line.trim()}`);
+      }
     }
-  }
   if (problems.length) {
     for (const p of problems) console.error("  -", p);
     fail(`${problems.length} residual brand reference(s)`);
   }
-  log("verify: clean");
+  log(`verify: clean (${scanned} files across ${REWRITE_ROOTS.join(", ")})`);
 }
 
 // ---------- main ----------
-applyAssets();
-applyStrings();
-applyConfig();
-applyCode();
-verify();
-log(DRY ? "dry run complete" : `applied FastVault ${VERSION} overlay`);
+// Guarded so fastvault/verify-build.mjs can import the allow-lists below without running the
+// overlay as a side effect of the import. `node fastvault/apply.mjs` still behaves exactly as
+// before; anything that merely imports this module gets the constants and nothing else.
+export { ALLOWED_BRAND_KEYS, ALLOWED_LITERAL_STRINGS, ALLOWED_LITERAL_PATTERNS };
+if (resolve(process.argv[1] ?? "") === resolve(fileURLToPath(import.meta.url))) {
+  applyAssets();
+  applyStrings();
+  applyConfig();
+  applyCode();
+  verify();
+  log(DRY ? "dry run complete" : `applied FastVault ${VERSION} overlay`);
+}

@@ -1,1 +1,5 @@
-{}
+{
+  "fastvaultAttribution": {
+    "message": "FastVault is based on the open-source Bitwarden® clients (GPL-3.0). Bitwarden is a trademark of Bitwarden, Inc., which is not affiliated with FastVault."
+  }
+}
