@@ -45,13 +45,15 @@ the other. Widen it there; never add a second list.
 ## Releases (this is real and already live)
 
 `.github/workflows/fastvault-desktop.yml` **builds** the Windows desktop
-app on `windows-2022` runners on every push to the `fastvault` branch, on
-every `fastvault-desktop-v*` tag push, and on demand via
-`workflow_dispatch`. It runs `apply.mjs` against a clean checkout, builds
-the Rust native modules and the Angular renderer, re-checks the built
-output for brand leaks (`fastvault/verify-build.mjs`), and packages
-`nsis` (installer) and `portable` targets with `electron-builder`. Every
-run uploads those files as a workflow artifact.
+app on `windows-2022` runners and the Linux desktop app on `ubuntu-22.04`
+runners, on every push to the `fastvault` branch, on every
+`fastvault-desktop-v*` tag push, and on demand via `workflow_dispatch`.
+Each job runs `apply.mjs` against a clean checkout, builds the Rust
+native modules and the Angular renderer, re-checks the built output for
+brand leaks (`fastvault/verify-build.mjs`), and packages its platform's
+targets with `electron-builder` — `nsis` (installer) and `portable` on
+Windows, `deb`/`rpm`/`AppImage` on Linux. Every run uploads those files
+as a workflow artifact.
 
 **Only a tag push publishes a GitHub Release.** The release step is
 gated on `refs/tags/fastvault-desktop-v*`; a branch push builds and
@@ -62,16 +64,43 @@ building if it does not — a mismatch would publish a release whose
 releasing is: bump `version.txt`, commit, push the branch, then push the
 matching `fastvault-desktop-vX.Y.Z` tag.
 
-Four real releases exist today:
+Five real releases exist today:
 [fastvault-desktop-v2026.7.0](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.0),
 [fastvault-desktop-v2026.7.1](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.1),
-[fastvault-desktop-v2026.7.2](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.2)
+[fastvault-desktop-v2026.7.2](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.2),
+[fastvault-desktop-v2026.7.3](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.3),
 and
-[fastvault-desktop-v2026.7.3](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.3).
+[fastvault-desktop-v2026.7.4](https://github.com/euayyelo-tech/fastvault-clients/releases/tag/fastvault-desktop-v2026.7.4)
+— the last of these is also the first release with Linux packages.
 Auto-update via `electron-updater`'s GitHub provider, pointed at this
-repo, has been proven working end to end: installing `2026.7.0` and then
-publishing `2026.7.1` had the running app offer the update and restart
-into it.
+repo, has been proven working end to end on Windows: installing
+`2026.7.0` and then publishing `2026.7.1` had the running app offer the
+update and restart into it. Linux auto-update is unverified — see the
+Linux section below.
+
+### Linux
+
+The Linux build packages three `electron-builder` targets from the same
+`apply.mjs` overlay, all x86_64: a `.deb`, an `.rpm`, and an `.AppImage`.
+Only the AppImage auto-updates — `electron-updater`'s Linux provider only
+checks for updates when `isAppImage()` is true
+(`apps/desktop/src/main/updater.main.ts`), which is upstream Bitwarden
+behaviour, not something FastVault changed. The `.deb` and `.rpm` update
+through your system package manager instead, like any other apt/dnf
+package.
+
+Install:
+
+```bash
+sudo apt install ./FastVault-<ver>-amd64.deb        # Debian/Ubuntu
+sudo dnf install ./FastVault-<ver>-x86_64.rpm        # Fedora/RHEL
+chmod +x FastVault-<ver>-x86_64.AppImage && ./FastVault-<ver>-x86_64.AppImage
+```
+
+**Not yet run on a real Linux machine.** CI proves the build and
+packaging succeed and the artefacts inspect cleanly, but no one has
+installed and opened the app on an actual Linux box yet. First person
+with one: install the `.deb`, log in, and check Help → About.
 
 ## Building locally
 

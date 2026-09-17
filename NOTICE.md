@@ -57,6 +57,23 @@ time by `fastvault/apply.mjs`:
   library's theme file are replaced with a green palette derived from
   fastvault.app's own design tokens; no component markup or behaviour is
   changed.
+- **Linux packaging:** the `electron-builder` config's `linux.target` is
+  set to `deb`/`rpm`/`AppImage` (no snap, no flatpak) with a FastVault
+  `linux.synopsis`; the project-level `package.json` that
+  `electron-builder` reads deb/rpm `Maintainer`/`Homepage` metadata from
+  gets FastVault's homepage, author, and repository fields in place of
+  Bitwarden's. The packaged Linux binary is renamed from `bitwarden-app`
+  to `fastvault-app` in both `apps/desktop/scripts/after-pack.js` (which
+  performs the rename) and `apps/desktop/resources/linux-wrapper.sh`
+  (which execs it under that name) — the two must agree, since that name
+  is what packaging and process monitors show. Two more Linux resource
+  files have their contents rebranded, though only snap/flatpak tooling
+  (not the deb/rpm/AppImage targets this fork builds) reads them today:
+  `com.bitwarden.desktop.desktop` gets FastVault's `Name`, `Exec`,
+  `Icon`, `StartupWMClass`, `Comment`, and `MimeType`, and
+  `com.bitwarden.desktop.policy` gets FastVault's PolicyKit action id,
+  description, and authentication message. Filenames are left as-is
+  because only those unused scripts reference them by name.
 
 Two checks enforce the above rather than trusting it: `apply.mjs`'s own
 `verify()` re-scans every source file it rewrote, and
