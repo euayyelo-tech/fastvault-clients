@@ -1050,10 +1050,25 @@ function applyBrowser() {
     "icon18_safari_locked@2x.png",
   ])
     remove(`apps/browser/src/images/${f}`);
-  // download-qr.png / app-store.png / google-play.png were NOT removed here: they are still
-  // referenced by download-bitwarden.component.html, which fix round 1 deliberately left in place
-  // (only its route and menu entry were removed, per that round's scope) — see the report's item 4
-  // for the follow-up this implies.
+
+  // The two "More from Bitwarden" / "Download Bitwarden" settings pages: fix round 1 disconnected
+  // their route and menu entry (settings-v2.component.html, app-routing.module.ts, a few lines
+  // below), but left the component files themselves on disk — still Bitwarden-branded, still
+  // shipping inside the zip even though nothing could navigate to them. Delete the files outright
+  // now that nothing references them (confirmed by grep: only app-routing.module.ts did, and the
+  // replaceExact calls below strip those two references at apply time). Neither component has a
+  // .spec.ts or .scss sibling (checked in the build worktree).
+  for (const f of [
+    "download-bitwarden.component.ts",
+    "download-bitwarden.component.html",
+    "more-from-bitwarden-page.component.ts",
+    "more-from-bitwarden-page.component.html",
+  ])
+    remove(`apps/browser/src/vault/popup/settings/${f}`);
+  // ...and the three images that were the only remaining reference to anything Bitwarden-branded
+  // in that pair of pages — dead weight in the zip until the components above were deleted.
+  for (const f of ["download-qr.png", "app-store.png", "google-play.png"])
+    remove(`apps/browser/src/images/${f}`);
 
   // Popup document <title> (webpack's HtmlWebpackPlugin renders this .ejs template into
   // popup/index.html). REWRITE_ROOTS' walk only visits .ts/.html, so this .ejs file — the only one

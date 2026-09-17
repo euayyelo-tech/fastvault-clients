@@ -29,5 +29,6 @@
   },
   "getTheMobileAppDesc": {
     "message": "Access your passwords on the go with the official Bitwarden apps."
-  }
+  },
+  "bitwardenForBusiness": { "message": "FastVault" }
 }
