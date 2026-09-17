@@ -328,6 +328,8 @@ function applyConfig() {
     delete j.nsisWeb;
     j.portable.artifactName = "FastVault-Portable-${version}.${ext}";
     j.linux.desktop.entry.Name = "FastVault";
+    j.linux.target = ["deb", "rpm", "AppImage"]; // no snap (Snap Store + unsquashfs post-step), no flatpak (Flathub)
+    j.linux.synopsis = "FastVault password manager";
     j.snap.summary = "FastVault is a password manager for all of your devices.";
     j.snap.description = "Password manager.";
     if (!j.win.extraFiles?.some((e) => e.to === "bitwarden_chromium_import_helper.exe"))
@@ -342,6 +344,19 @@ function applyConfig() {
   editJson("apps/desktop/package.json", (j) => {
     j.version = VERSION;
     j.description = "FastVault password manager";
+    // electron-builder reads deb/rpm Maintainer/Homepage straight from this file's package
+    // metadata (this is the project-level package.json electron-builder itself runs against, not
+    // apps/desktop/src/package.json below, which only affects the app manifest bundled inside the
+    // packaged app) — still Bitwarden Inc. today. Same guarded pattern as the src/package.json
+    // block below: anchored on the upstream values so an upstream change fails here instead of
+    // silently writing over something different.
+    j.homepage = SITE;
+    if (j.author !== "Bitwarden Inc. <hello@bitwarden.com> (https://bitwarden.com)")
+      fail(`apps/desktop/package.json: unexpected author ${JSON.stringify(j.author)}`);
+    j.author = "FSITES LTD <support@fastvault.app> (https://fastvault.app)";
+    if (j.repository?.url !== "git+https://github.com/bitwarden/clients.git")
+      fail(`apps/desktop/package.json: unexpected repository ${JSON.stringify(j.repository)}`);
+    j.repository.url = `git+https://github.com/${REPO}.git`;
   });
   // apps/desktop/src/package.json is copied by webpack (CopyWebpackPlugin, webpack.base.js)
   // into build/package.json, the manifest actually bundled into the packaged app. It is what
@@ -603,6 +618,49 @@ function applyCode() {
     linuxBiometrics,
     `const policyFileName = "com.bitwarden.Bitwarden.policy";`,
     `const policyFileName = "app.fastvault.desktop.policy";`,
+  );
+
+  // Linux: the packaged real binary is renamed by after-pack.js and exec'd by the wrapper script that
+  // takes its place — that name is what `ps`/system monitors show. Both sides must agree.
+  replaceRegexMin("apps/desktop/scripts/after-pack.js", /bitwarden-app/g, "fastvault-app", 2);
+  replaceRegexMin("apps/desktop/resources/linux-wrapper.sh", /bitwarden-app/g, "fastvault-app", 2);
+  // Snap/flatpak-only resource files: not used by the deb/rpm/AppImage targets we build, but they are
+  // Linux artefacts in this repo that still said Bitwarden. Contents rebranded; filenames kept because
+  // only the (unused) snap/flatpak scripts reference them by name.
+  const desktopFile = "apps/desktop/resources/com.bitwarden.desktop.desktop";
+  replaceExact(desktopFile, "Name=Bitwarden", "Name=FastVault");
+  replaceExact(desktopFile, "Exec=bitwarden %u", "Exec=fastvault %u");
+  replaceExact(desktopFile, "Icon=com.bitwarden.desktop", "Icon=app.fastvault.desktop");
+  replaceExact(
+    desktopFile,
+    "StartupWMClass=com.bitwarden.desktop",
+    "StartupWMClass=app.fastvault.desktop",
+  );
+  replaceExact(
+    desktopFile,
+    "Comment=A secure and free password manager for all of your devices.",
+    "Comment=FastVault password manager",
+  );
+  replaceExact(
+    desktopFile,
+    "MimeType=x-scheme-handler/bitwarden;",
+    "MimeType=x-scheme-handler/fastvault;",
+  );
+  const policyFile = "apps/desktop/resources/com.bitwarden.desktop.policy";
+  replaceExact(
+    policyFile,
+    `<action id="com.bitwarden.Bitwarden.unlock">`,
+    `<action id="app.fastvault.desktop.unlock">`,
+  );
+  replaceExact(
+    policyFile,
+    "<description>Unlock Bitwarden</description>",
+    "<description>Unlock FastVault</description>",
+  );
+  replaceExact(
+    policyFile,
+    "<message>Authenticate to unlock Bitwarden</message>",
+    "<message>Authenticate to unlock FastVault</message>",
   );
 
   // URL schemes used by callbacks (SSO / Duo / LastPass — see spec §7)
@@ -939,6 +997,21 @@ function verify() {
           if (line.includes("Bitwarden")) problems.push(`${f}: html text ${line.trim()}`);
       }
     }
+  // Linux packaging files live outside REWRITE_ROOTS; check the four the overlay rewrites explicitly.
+  // after-pack.js is narrowed to /bitwarden-app/ instead of the general /bitwarden/i: its darwin-only
+  // signing branch legitimately names Bitwarden's own Apple codesigning identities ("Developer ID
+  // Application: Bitwarden Inc", "3rd Party Mac Developer Application: Bitwarden Inc") plus a comment
+  // referencing them — real Apple-registered certificate common names, not the binary-name string this
+  // task renamed, and out of scope (FastVault has no Bitwarden Inc certificate to sign with regardless).
+  for (const f of [
+    "apps/desktop/scripts/after-pack.js",
+    "apps/desktop/resources/linux-wrapper.sh",
+    "apps/desktop/resources/com.bitwarden.desktop.desktop",
+    "apps/desktop/resources/com.bitwarden.desktop.policy",
+  ]) {
+    const re = f.endsWith("after-pack.js") ? /bitwarden-app/i : /bitwarden/i;
+    if (re.test(read(f))) problems.push(`${f}: still mentions bitwarden`);
+  }
   if (problems.length) {
     for (const p of problems) console.error("  -", p);
     fail(`${problems.length} residual brand reference(s)`);
